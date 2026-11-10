@@ -29,6 +29,20 @@ def check_service_health(name: str, url: str) -> bool:
 
 
 def test_supabase_e2e_flow() -> bool:
+    e2e_url = "http://localhost:8001/test-write?message=integration_test_team4"
+    print("\n--- Running E2E Backend-to-Supabase Connectivity Check ---")
+    try:
+        req = urllib.request.Request(e2e_url, method="POST")
+        with urllib.request.urlopen(req, timeout=5) as response:
+            body = response.read().decode("utf-8")
+            if response.status == 200 and "saved" in body:
+                print(f"[PASS] E2E Database write verified! Response: {body}")
+                return True
+            print(f"[WARN] Unexpected response: {body}")
+            return False
+    except Exception as e:
+        print(f"[FAIL] E2E flow failed: {e}")
+        return False
     """
     End-to-End (E2E) integration test:
     Sends a request to the backend service and verifies cloud database (Supabase) connectivity.
