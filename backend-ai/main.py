@@ -21,5 +21,20 @@ def health():
     return {"service": "backend-ai", "status": "ok"}
 
 
-# TODO (צוות 3): חיבור ל-Google AI Studio עם המפתח GOOGLE_AI_API_KEY מתוך .env
-# api_key = os.environ.get("GOOGLE_AI_API_KEY")
+from google import genai
+from pydantic import BaseModel
+
+
+class Question(BaseModel):
+    question: str
+
+
+@app.post("/ask")
+def ask(q: Question):
+    """שולח שאלה ל-Google AI ומחזיר את התשובה"""
+    client = genai.Client(api_key=os.environ["GOOGLE_AI_API_KEY"])
+    response = client.models.generate_content(
+        model=os.environ.get("GOOGLE_AI_MODEL", "gemini-2.5-flash"),
+        contents=q.question,
+    )
+    return {"answer": response.text}
