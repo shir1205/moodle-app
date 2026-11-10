@@ -1,0 +1,30 @@
+# CampuScope - הרצת כל המערכת: docker compose up --build
+# הפורטים תואמים ל-tests/test_integration.py
+
+services:
+  frontend:
+    build: ./frontend
+    ports:
+      - "3000:3000"
+    depends_on:
+      - backend-core
+      - backend-courses
+      - backend-ai
+
+  backend-core:          # צוות 1 - משתמשים, הרשאות, אבטחה
+    build: ./backend-core
+    ports:
+      - "8001:8000"
+    env_file: .env
+
+  backend-courses:       # צוות 2 - קורסים ומטלות
+    build: ./backend-courses
+    ports:
+      - "8002:8000"
+    env_file: .env
+
+  backend-ai:            # צוות 3 - עוזר AI
+    build: ./backend-ai
+    ports:
+      - "8003:8000"
+    env_file: .env
