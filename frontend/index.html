@@ -23,5 +23,25 @@
       }
     }
   </script>
+  
+
+  <hr>
+<h2>בדיקת כתיבה למסד הנתונים</h2>
+<input id="msg" placeholder="הודעה לבדיקה">
+<button onclick="writeTest()">שמירה ב-Supabase</button>
+<p id="writeOut"></p>
+<script>
+  async function writeTest() {
+    const msg = document.getElementById("msg").value || "hello from frontend";
+    const out = document.getElementById("writeOut");
+    try {
+      const r = await fetch(`http://localhost:8001/test-write?message=${encodeURIComponent(msg)}`, { method: "POST" });
+      const data = await r.json();
+      out.textContent = r.ok ? `✅ נשמר במסד הנתונים (id: ${data.saved[0].id})` : `❌ שגיאה ${r.status}`;
+    } catch (e) {
+      out.textContent = "❌ השרת לא זמין";
+    }
+  }
+</script>
 </body>
 </html>
