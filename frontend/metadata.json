@@ -1,0 +1,8 @@
+{
+  "name": "Remix Remix CampuScope",
+  "description": "מערכת ניהול למידה אקדמית מתקדמת (LMS) עם כלי AI, מעקב ביצועים, ניהול קורסים ומטלות",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}

@@ -6,6 +6,7 @@ services:
     build: ./frontend
     ports:
       - "3000:3000"
+      - "24678:24678"
     depends_on:
       - backend-core
       - backend-courses
