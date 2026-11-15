@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useParams, Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { useToast } from '../context/ToastContext';
@@ -42,7 +42,35 @@ export const CourseDetailPage: React.FC = () => {
   const [assignments, setAssignments] = useState<Assignment[]>(() =>
     AssignmentService.getAssignments(courseId)
   );
+  useEffect(() => {
+    let cancelled = false;
 
+    const loadAssignments = async () => {
+      try {
+        const apiAssignments =
+          await AssignmentService.getAssignmentsFromApi(courseId);
+
+        if (!cancelled) {
+          setAssignments((current) => {
+            const localOnly = current.filter(
+              (assignment) =>
+                !apiAssignments.some((api) => api.id === assignment.id)
+            );
+
+            return [...localOnly, ...apiAssignments];
+          });
+        }
+      } catch (error) {
+        console.error('Failed to load assignments:', error);
+      }
+    };
+
+    loadAssignments();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [courseId]);
   // Expanded weeks state
   const [expandedUnits, setExpandedUnits] = useState<Record<string, boolean>>(() => {
     const init: Record<string, boolean> = {};
