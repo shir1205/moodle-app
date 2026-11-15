@@ -126,6 +126,10 @@ export const CourseDetailPage: React.FC = () => {
 
   const isStaff = role === ROLES.LECTURER || role === ROLES.TA || role === ROLES.ADMIN;
   const canManageCourse = role === ROLES.LECTURER || role === ROLES.ADMIN;
+  const visibleAssignments = assignments.filter(
+    (assignment) =>
+      assignment.status === 'published' || canManageCourse
+  );
   const canUploadMaterials = role === ROLES.LECTURER || role === ROLES.TA || role === ROLES.ADMIN;
   const canReviewSubmissions = role === ROLES.LECTURER || role === ROLES.TA || role === ROLES.ADMIN;
 
@@ -320,7 +324,7 @@ export const CourseDetailPage: React.FC = () => {
                 : 'text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800'
             }`}
           >
-            מטלות והגשות ({assignments.length})
+            מטלות והגשות ({visibleAssignments.length})
           </button>
         </div>
 
@@ -529,7 +533,7 @@ export const CourseDetailPage: React.FC = () => {
       {/* Assignments Tab */}
       {activeTab === 'assignments' && (
         <div className="space-y-4">
-          {assignments.length === 0 ? (
+          {visibleAssignments.length === 0 ? (
             <EmptyState
               icon={FileCheck}
               title="אין מטלות שפורסמו בקורס זה עדיין"
@@ -539,7 +543,7 @@ export const CourseDetailPage: React.FC = () => {
             />
           ) : (
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              {assignments.map((assignment) => {
+              {visibleAssignments.map((assignment) => {
                 const isPast = new Date(assignment.dueDate).getTime() < Date.now();
                 const studentSub = currentUser
                   ? AssignmentService.getStudentSubmission(assignment.id, currentUser.id)
