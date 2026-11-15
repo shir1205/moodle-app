@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head><meta charset="UTF-8"><title>CampuScope</title></head>
+<body style="font-family: sans-serif; padding: 2rem">
+  <h1>CampuScope</h1>
+  <p>דף זמני. צוות 4 יחליף אותו בקוד מ-Google AI Studio.</p>
+  <button onclick="check()">בדיקת חיבור לשרתים</button>
+  <ul id="out"></ul>
+  <script>
+    const services = { "Core (8001)": 8001, "Courses (8002)": 8002, "AI (8003)": 8003 };
+    async function check() {
+      const out = document.getElementById("out");
+      out.innerHTML = "";
+      for (const [name, port] of Object.entries(services)) {
+        const li = document.createElement("li");
+        try {
+          const r = await fetch(`http://localhost:${port}/health`);
+          li.textContent = `${name}: ${r.ok ? "✅ עובד" : "❌ " + r.status}`;
+        } catch (e) {
+          li.textContent = `${name}: ❌ לא זמין`;
+        }
+        out.appendChild(li);
+      }
+    }
+  </script>
+  
+
+  <hr>
+<h2>בדיקת כתיבה למסד הנתונים</h2>
+<input id="msg" placeholder="הודעה לבדיקה">
+<button onclick="writeTest()">שמירה ב-Supabase</button>
+<p id="writeOut"></p>
+<script>
+  async function writeTest() {
+    const msg = document.getElementById("msg").value || "hello from frontend";
+    const out = document.getElementById("writeOut");
+    try {
+      const r = await fetch(`http://localhost:8001/test-write?message=${encodeURIComponent(msg)}`, { method: "POST" });
+      const data = await r.json();
+      out.textContent = r.ok ? `✅ נשמר במסד הנתונים (id: ${data.saved[0].id})` : `❌ שגיאה ${r.status}`;
+    } catch (e) {
+      out.textContent = "❌ השרת לא זמין";
+    }
+  }
+</script>
+</body>
+</html>
