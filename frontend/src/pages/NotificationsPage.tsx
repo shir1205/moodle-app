@@ -32,29 +32,34 @@ export const NotificationsPage: React.FC = () => {
   const [activeTab, setActiveTab] = useState<'center' | 'preferences'>('center');
   const [filterType, setFilterType] = useState<'all' | 'unread'>('all');
 
-  // Notifications state
-  const [notifications, setNotifications] = useState<Notification[]>(() =>
-    currentUser ? NotificationService.getNotifications(currentUser.id) : []
-  );
+  // Notifications state (Story 35)
+  const [notifications, setNotifications] = useState<Notification[]>([]);
 
-  // Preferences state
-  const [prefs, setPrefs] = useState<NotificationPreference>(() =>
-    currentUser
-      ? NotificationService.getPreferences(currentUser.id)
-      : {
-          userId: '',
-          gradeInApp: true,
-          gradeEmail: true,
-          aiFeedbackInApp: true,
-          aiFeedbackEmail: false,
-          newAssignmentInApp: true,
-          newAssignmentEmail: true,
-          reminderInApp: true,
-          reminderEmail: true,
-          lecturerMessageInApp: true,
-          lecturerMessageEmail: true,
-        }
-  );
+  // משיכת התראות מהשרת
+  React.useEffect(() => {
+    if (currentUser) {
+      NotificationService.getNotifications(currentUser.id).then(data => setNotifications(data));
+    }
+  }, [currentUser]);
+
+
+  // Preferences state (Story 36)
+  const [prefs, setPrefs] = useState<any>({
+    userId: currentUser?.id || '',
+    gradeInApp: true, gradeEmail: true,
+    aiFeedbackInApp: true, aiFeedbackEmail: false,
+    newAssignmentInApp: true, newAssignmentEmail: true,
+    reminderInApp: true, reminderEmail: true,
+    lecturerMessageInApp: true, lecturerMessageEmail: true,
+  });
+
+  // משיכת העדפות מהשרת
+  React.useEffect(() => {
+    if (currentUser) {
+      NotificationService.getPreferences(currentUser.id).then(data => setPrefs(data));
+    }
+  }, [currentUser]);
+
 
   const filteredNotifications = notifications.filter((n) => {
     if (filterType === 'unread') return !n.isRead;
@@ -62,27 +67,36 @@ export const NotificationsPage: React.FC = () => {
   });
 
   const handleMarkAllAsRead = () => {
-    if (!currentUser) return;
-    NotificationService.markAllAsRead(currentUser.id);
-    setNotifications(NotificationService.getNotifications(currentUser.id));
-    refreshUnreadCount();
-    showToast('כל ההתראות סומנו כנקראו', 'success');
+    showToast('עדכון גורף עדיין לא נתמך בשרת', 'error');
   };
 
-  const handleNotificationClick = (n: Notification) => {
-    NotificationService.markAsRead(n.id);
-    refreshUnreadCount();
-    setNotifications(currentUser ? NotificationService.getNotifications(currentUser.id) : []);
+  // פונקציה לסימון כנקרא - מדברת עם השרת (Story 35)
+  const handleNotificationClick = async (n: Notification) => {
+    try {
+      await NotificationService.markAsRead(n.id);
+      if (currentUser) {
+        const updated = await NotificationService.getNotifications(currentUser.id);
+        setNotifications(updated);
+        refreshUnreadCount();
+      }
+    } catch (error) {
+      console.error("Failed to mark as read:", error);
+    }
 
     if (n.link) {
       navigate(n.link);
     }
   };
 
-  const handleSavePreferences = (e: React.FormEvent) => {
+  // פונקציה לשמירת העדפות - מדברת עם השרת (Story 36)
+  const handleSavePreferences = async (e: React.FormEvent) => {
     e.preventDefault();
-    NotificationService.updatePreferences(prefs);
-    showToast('העדפות ההתראה נשמרו בהצלחה!', 'success');
+    try {
+      await NotificationService.updatePreferences(prefs);
+      showToast('העדפות ההתראה נשמרו בהצלחה!', 'success');
+    } catch (err) {
+      showToast('שגיאה בשמירת העדפות', 'error');
+    }
   };
 
   const getNotificationIcon = (type: NotificationType) => {
@@ -235,23 +249,8 @@ export const NotificationsPage: React.FC = () => {
                       </div>
                     </div>
                     <p className="text-xs text-slate-600 dark:text-slate-400 mt-1 leading-relaxed">
-                      {notif.content}
+                      {notif.message || notif.content}
                     </p>
-
-                    {/* Delivery channel badge */}
-                    <div className="flex items-center gap-2 mt-2 text-[10px] text-slate-400">
-                      {notif.channel === 'both' ? (
-                        <span className="flex items-center gap-1">
-                          <Mail className="w-3 h-3 text-slate-400" />
-                          <span>נשלח גם בדוא״ל</span>
-                          {notif.emailStatus === 'failed' && (
-                            <span className="text-rose-500 font-bold">(נכשלה שליחה במייל)</span>
-                          )}
-                        </span>
-                      ) : (
-                        <span>התראה באתר בלבד</span>
-                      )}
-                    </div>
                   </div>
                 </div>
               ))}
