@@ -57,6 +57,36 @@ export class AssignmentService {
       );
   }
 
+static async getActiveAssignmentsFromApi(
+    courseId: string
+  ): Promise<Assignment[]> {
+    const response = await fetch(
+      `http://localhost:8002/courses/${encodeURIComponent(courseId)}/assignments/active`
+    );
+
+    if (!response.ok) {
+      throw new Error(
+        `Failed to load active assignments: ${response.status}`
+      );
+    }
+
+    const data = await response.json();
+
+    return data.map((item: any): Assignment => ({
+      id: item.id,
+      courseId: item.course_id,
+      unitId: item.unit_id,
+      title: item.title,
+      instructions: item.instructions,
+      dueDate: item.due_date,
+      maxGrade: item.max_grade,
+      allowedFormats: item.allowed_formats,
+      status: item.status,
+      createdAt: item.created_at,
+    }));
+  }
+
+
   static getAssignmentById(assignmentId: string): Assignment | undefined {
     this.init();
     const all = this.getAssignments();

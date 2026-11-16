@@ -44,16 +44,20 @@ export const CourseDetailPage: React.FC = () => {
   );
   useEffect(() => {
     let cancelled = false;
+    setAssignments(AssignmentService.getAssignments(courseId));
 
     const loadAssignments = async () => {
       try {
         const apiAssignments =
-          await AssignmentService.getAssignmentsFromApi(courseId);
+          role === ROLES.STUDENT && courseId
+            ? await AssignmentService.getActiveAssignmentsFromApi(courseId)
+            : await AssignmentService.getAssignmentsFromApi(courseId);
 
         if (!cancelled) {
           setAssignments((current) => {
             const localOnly = current.filter(
               (assignment) =>
+                assignment.courseId === courseId &&
                 !apiAssignments.some((api) => api.id === assignment.id)
             );
 
@@ -70,7 +74,7 @@ export const CourseDetailPage: React.FC = () => {
     return () => {
       cancelled = true;
     };
-  }, [courseId]);
+  }, [courseId, role]);
   // Expanded weeks state
   const [expandedUnits, setExpandedUnits] = useState<Record<string, boolean>>(() => {
     const init: Record<string, boolean> = {};
@@ -126,10 +130,16 @@ export const CourseDetailPage: React.FC = () => {
 
   const isStaff = role === ROLES.LECTURER || role === ROLES.TA || role === ROLES.ADMIN;
   const canManageCourse = role === ROLES.LECTURER || role === ROLES.ADMIN;
-  const visibleAssignments = assignments.filter(
-    (assignment) =>
-      assignment.status === 'published' || canManageCourse
-  );
+  const visibleAssignments = assignments
+    .filter(
+      (assignment) =>
+        assignment.status === 'published' || canManageCourse
+    )
+    .sort(
+      (a, b) =>
+        new Date(a.dueDate).getTime() -
+        new Date(b.dueDate).getTime()
+    );
   const canUploadMaterials = role === ROLES.LECTURER || role === ROLES.TA || role === ROLES.ADMIN;
   const canReviewSubmissions = role === ROLES.LECTURER || role === ROLES.TA || role === ROLES.ADMIN;
 
@@ -585,7 +595,7 @@ export const CourseDetailPage: React.FC = () => {
                           ) : isPast ? (
                             <span className="text-xs font-semibold text-rose-600 flex items-center gap-1">
                               <AlertCircle className="w-3.5 h-3.5" />
-                              <span>טרם הוגש (נעול)</span>
+                              <span>באיחור</span>
                             </span>
                           ) : (
                             <span className="text-xs font-semibold text-amber-600">טרם הוגש</span>
