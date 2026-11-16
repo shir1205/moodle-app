@@ -137,7 +137,7 @@ export const CreateAssignmentPage: React.FC = () => {
     !isDueInPast &&
     allowedFormats.length > 0;
 
-  const handleSubmit = (status: 'published' | 'draft') => {
+  const handleSubmit = async (status: 'published' | 'draft') => {
     setFormError('');
 
     if (!isTitleValid) {
@@ -174,7 +174,29 @@ export const CreateAssignmentPage: React.FC = () => {
 
       showToast('המטלה עודכנה בהצלחה!', 'success');
       navigate(`/courses/${selectedCourseId}/assignments/${assignmentId}`);
-    } else {
+      } else {
+      if (status === 'draft') {
+        try {
+          await AssignmentService.createDraftAssignment({
+            courseId: selectedCourseId,
+            unitId: selectedUnitId,
+            title: title.trim(),
+            instructions,
+            dueDate: fullDueIso,
+            maxGrade,
+            allowedFormats,
+          });
+
+          showToast('המטלה נשמרה כטיוטה', 'success');
+          navigate(`/courses/${selectedCourseId}`);
+        } catch (error) {
+          console.error('Failed to create draft:', error);
+          setFormError('לא ניתן לשמור את המטלה כרגע. נסי שוב מאוחר יותר.');
+        }
+
+        return;
+      }
+
       const res = AssignmentService.createAssignment({
         courseId: selectedCourseId,
         unitId: selectedUnitId,
@@ -191,7 +213,7 @@ export const CreateAssignmentPage: React.FC = () => {
         return;
       }
 
-      showToast(status === 'published' ? 'המטלה פורסמה בהצלחה לסטודנטים!' : 'המטלה נשמרה כטיוטה', 'success');
+      showToast('המטלה פורסמה בהצלחה לסטודנטים!', 'success');
       navigate(`/courses/${selectedCourseId}`);
     }
   };

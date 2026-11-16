@@ -30,6 +30,32 @@ export class AssignmentService {
     if (!courseId) return all;
     return all.filter((a) => a.courseId === courseId);
   }
+  static async getAssignmentsFromApi(courseId?: string): Promise<Assignment[]> {
+    const response = await fetch('http://localhost:8002/assignments');
+
+    if (!response.ok) {
+      throw new Error(`Failed to load assignments: ${response.status}`);
+    }
+
+    const data = await response.json();
+
+    return data
+      .map((item: any): Assignment => ({
+        id: item.id,
+        courseId: item.course_id,
+        unitId: item.unit_id,
+        title: item.title,
+        instructions: item.instructions,
+        dueDate: item.due_date,
+        maxGrade: item.max_grade,
+        allowedFormats: item.allowed_formats,
+        status: item.status,
+        createdAt: item.created_at,
+      }))
+      .filter((assignment: Assignment) =>
+        !courseId || assignment.courseId === courseId
+      );
+  }
 
   static getAssignmentById(assignmentId: string): Assignment | undefined {
     this.init();
@@ -318,5 +344,49 @@ export class AssignmentService {
     });
 
     return { success: true, submission: sub };
+  }
+  static async createDraftAssignment(params: {
+    courseId: string;
+    unitId: string;
+    title: string;
+    instructions: string;
+    dueDate: string;
+    maxGrade?: number;
+    allowedFormats?: string[];
+  }): Promise<Assignment> {
+    const response = await fetch(
+      'http://localhost:8002/assignments',
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          ...params,
+          status: 'draft',
+        }),
+      }
+    );
+
+    if (!response.ok) {
+      throw new Error(
+        `Failed to create assignment: ${response.status}`
+      );
+    }
+
+    const data = await response.json();
+
+    return {
+      id: data.id,
+      courseId: data.course_id,
+      unitId: data.unit_id,
+      title: data.title,
+      instructions: data.instructions,
+      dueDate: data.due_date,
+      maxGrade: data.max_grade,
+      allowedFormats: data.allowed_formats,
+      status: data.status,
+      createdAt: data.created_at,
+    };
   }
 }
