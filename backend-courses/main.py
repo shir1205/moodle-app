@@ -108,3 +108,22 @@ def list_assignments():
 
     return response.data
 
+@app.get("/courses/{course_id}/assignments/active")
+def list_active_assignments(course_id: str):
+    try:
+        response = (
+            get_supabase()
+            .table("assignments")
+            .select("*")
+            .eq("course_id", course_id)
+            .eq("status", "published")
+            .order("due_date", desc=False)
+            .execute()
+        )
+    except Exception:
+        raise HTTPException(
+            status_code=503,
+            detail="Unable to load active assignments"
+        )
+
+    return response.data
