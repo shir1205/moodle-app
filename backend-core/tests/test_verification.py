@@ -18,30 +18,44 @@ class FakeAuthError(Exception):
 
 def test_verify_email_success():
     mock_supabase = MagicMock()
-    mock_supabase.auth.verify_otp.return_value = SimpleNamespace(
-        user=SimpleNamespace(id="user-1", email="dana@demo.ac.il")
+    mock_supabase.auth.get_user.return_value = SimpleNamespace(
+        user=SimpleNamespace(
+            id="user-1", email="dana@demo.ac.il", email_confirmed_at="2026-11-17T10:00:00Z"
+        )
     )
 
     with patch("main.get_supabase", return_value=mock_supabase):
-        response = client.post("/verify-email", json={"token_hash": "abc123"})
+        response = client.post("/verify-email", json={"access_token": "valid-token"})
 
     assert response.status_code == 200
     assert response.json() == {"verified": True, "user_id": "user-1", "email": "dana@demo.ac.il"}
-    mock_supabase.auth.verify_otp.assert_called_once_with({"type": "signup", "token_hash": "abc123"})
+    mock_supabase.auth.get_user.assert_called_once_with("valid-token")
 
 
-def test_verify_email_invalid_or_expired_link():
+def test_verify_email_not_confirmed_yet():
     mock_supabase = MagicMock()
-    mock_supabase.auth.verify_otp.side_effect = FakeAuthError("Token has expired or is invalid", 403)
+    mock_supabase.auth.get_user.return_value = SimpleNamespace(
+        user=SimpleNamespace(id="user-1", email="dana@demo.ac.il", email_confirmed_at=None)
+    )
 
     with patch("main.get_supabase", return_value=mock_supabase):
-        response = client.post("/verify-email", json={"token_hash": "old-token"})
+        response = client.post("/verify-email", json={"access_token": "valid-token"})
+
+    assert response.status_code == 403
+
+
+def test_verify_email_invalid_or_expired_token():
+    mock_supabase = MagicMock()
+    mock_supabase.auth.get_user.side_effect = FakeAuthError("invalid JWT", 401)
+
+    with patch("main.get_supabase", return_value=mock_supabase):
+        response = client.post("/verify-email", json={"access_token": "bad-token"})
 
     assert response.status_code == 400
 
 
 def test_verify_email_empty_token():
-    response = client.post("/verify-email", json={"token_hash": "  "})
+    response = client.post("/verify-email", json={"access_token": "  "})
     assert response.status_code == 400
 
 
@@ -53,7 +67,13 @@ def test_resend_verification_success():
 
     assert response.status_code == 200
     assert response.json()["sent"] is True
-    mock_supabase.auth.resend.assert_called_once_with({"type": "signup", "email": "dana@demo.ac.il"})
+    mock_supabase.auth.resend.assert_called_once_with(
+        {
+            "type": "signup",
+            "email": "dana@demo.ac.il",
+            "options": {"email_redirect_to": "http://localhost:3000/verify"},
+        }
+    )
 
 
 def test_resend_verification_unknown_email_gives_same_answer():

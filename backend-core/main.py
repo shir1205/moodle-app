@@ -43,21 +43,29 @@ def test_write(message: str = "hello from CampuScope"):
 # ---------------------------------------------------------------------------
 # סיפור 57 - אימות כתובת דוא"ל (Email Verification)
 #
-# את המייל עצמו שולח Supabase Auth אוטומטית אחרי sign_up (סיפור 55),
-# בתנאי שבלוח הבקרה של Supabase מופעל "Confirm email"
-# (Authentication -> Sign In / Providers -> Email).
+# הזרימה (Supabase בגרסה החינמית, תבנית המייל לא ניתנת לעריכה):
+#   1. sign_up (סיפור 55) עם email_redirect_to = VERIFY_REDIRECT_URL
+#   2. Supabase שולח מייל. הקישור עובר דרך Supabase, שמאמת את המייל בעצמו
+#   3. Supabase מחזיר את המשתמש ל-/verify עם access_token בכתובת
+#   4. מסך /verify שולח את ה-access_token ל-POST /verify-email
+#      והשרת בודק מול Supabase שהמייל באמת אומת (email_confirmed_at)
 #
-#   POST /verify-email          - אישור הקישור שהמשתמש לחץ עליו במייל
+#   POST /verify-email          - בדיקה בצד השרת שהמשתמש מאומת
 #   POST /resend-verification   - שליחה חוזרת של מייל האימות
 #   is_email_not_confirmed()    - עזר לנתיב /login (סיפור 58)
 # ---------------------------------------------------------------------------
+
+# לאן Supabase מחזיר את המשתמש אחרי לחיצה על הקישור במייל.
+# להשתמש באותו ערך גם ב-sign_up (סיפור 55):
+#   options={"email_redirect_to": VERIFY_REDIRECT_URL}
+VERIFY_REDIRECT_URL = os.environ.get("VERIFY_REDIRECT_URL", "http://localhost:3000/verify")
 
 EMAIL_NOT_CONFIRMED_MESSAGE = "החשבון טרם אומת. נא לבדוק את תיבת הדוא״ל וללחוץ על קישור האימות."
 INVALID_LINK_MESSAGE = "קישור האימות אינו תקף או שפג תוקפו"
 
 
 class VerifyEmailRequest(BaseModel):
-    token_hash: str
+    access_token: str
 
 
 class ResendVerificationRequest(BaseModel):
@@ -76,22 +84,24 @@ def is_email_not_confirmed(error: Exception) -> bool:
 @app.post("/verify-email")
 def verify_email(body: VerifyEmailRequest):
     """
-    המשתמש לחץ על הקישור במייל, והממשק שולח לכאן את ה-token_hash שבקישור.
-    Supabase מסמן את המשתמש כמאומת (email_confirmed_at).
+    Supabase כבר אימת את המייל והחזיר את המשתמש ל-/verify עם access_token.
+    כאן בודקים בצד השרת שהטוקן אמיתי ושהמייל אכן מסומן כמאומת,
+    כדי לא לסמוך רק על מה שכתוב בכתובת בדפדפן.
     """
-    if not body.token_hash.strip():
+    if not body.access_token.strip():
         raise HTTPException(status_code=400, detail=INVALID_LINK_MESSAGE)
 
     try:
-        result = get_supabase().auth.verify_otp(
-            {"type": "signup", "token_hash": body.token_hash}
-        )
+        result = get_supabase().auth.get_user(body.access_token)
     except Exception:
         raise HTTPException(status_code=400, detail=INVALID_LINK_MESSAGE)
 
     user = getattr(result, "user", None)
     if user is None:
         raise HTTPException(status_code=400, detail=INVALID_LINK_MESSAGE)
+
+    if not getattr(user, "email_confirmed_at", None):
+        raise HTTPException(status_code=403, detail=EMAIL_NOT_CONFIRMED_MESSAGE)
 
     return {"verified": True, "user_id": user.id, "email": user.email}
 
@@ -107,7 +117,13 @@ def resend_verification(body: ResendVerificationRequest):
         raise HTTPException(status_code=400, detail="כתובת אימייל לא תקינה")
 
     try:
-        get_supabase().auth.resend({"type": "signup", "email": email})
+        get_supabase().auth.resend(
+            {
+                "type": "signup",
+                "email": email,
+                "options": {"email_redirect_to": VERIFY_REDIRECT_URL},
+            }
+        )
     except Exception as error:
         if getattr(error, "status", None) == 429 or "rate limit" in str(error).lower():
             raise HTTPException(status_code=429, detail="נשלחו יותר מדי בקשות. נסו שוב בעוד דקה.")

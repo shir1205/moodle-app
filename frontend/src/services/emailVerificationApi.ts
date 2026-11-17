@@ -10,13 +10,16 @@ export interface ApiResult {
   message: string;
 }
 
-/** שליחת ה-token_hash מהקישור שבמייל לשרת, כדי לסמן את המשתמש כמאומת */
-export async function verifyEmailWithServer(tokenHash: string): Promise<ApiResult> {
+/**
+ * Supabase מאמת את המייל בעצמו ומחזיר את המשתמש ל-/verify עם access_token בכתובת.
+ * כאן שולחים את הטוקן לשרת, שבודק מול Supabase שהמייל באמת אומת.
+ */
+export async function verifyEmailWithServer(accessToken: string): Promise<ApiResult> {
   try {
     const response = await fetch(`${CORE_API_URL}/verify-email`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ token_hash: tokenHash }),
+      body: JSON.stringify({ access_token: accessToken }),
     });
     const data = await response.json().catch(() => ({}));
 

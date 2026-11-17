@@ -3,7 +3,8 @@
  * SPDX-License-Identifier: Apache-2.0
  *
  * סיפור 57 - מסך אימות כתובת דוא"ל
- * קישור אמיתי מהמייל (token_hash) נבדק מול השרת backend-core.
+ * Supabase מאמת את המייל ומחזיר לכאן עם access_token (או error) אחרי ה-# בכתובת.
+ * השרת backend-core בודק את הטוקן ומוודא שהמייל אכן אומת.
  * קישור דמה של אב-הטיפוס (token / userId) ממשיך לעבוד כמו קודם.
  */
 
@@ -15,9 +16,24 @@ import { useAuth } from '../context/AuthContext';
 import { CheckCircle2, AlertCircle, ArrowLeft, LogIn, Mail } from 'lucide-react';
 import confetti from 'canvas-confetti';
 
+/** קריאת הפרמטרים ש-Supabase מוסיף אחרי ה-# בכתובת (ולפעמים אחרי ה-?) */
+function readSupabaseRedirect(searchParams: URLSearchParams) {
+  const hash = new URLSearchParams(window.location.hash.replace(/^#/, ''));
+  const pick = (key: string) => hash.get(key) || searchParams.get(key) || '';
+  return {
+    accessToken: pick('access_token'),
+    errorCode: pick('error_code') || pick('error'),
+  };
+}
+
+const SUPABASE_ERROR_MESSAGES: Record<string, string> = {
+  otp_expired: 'פג תוקף קישור האימות',
+  access_denied: 'קישור האימות אינו תקף או שפג תוקפו',
+};
+
 export const VerifyEmailPage: React.FC = () => {
   const [searchParams] = useSearchParams();
-  const tokenHash = searchParams.get('token_hash') || '';
+  const [{ accessToken, errorCode }] = useState(() => readSupabaseRedirect(searchParams));
   const token = searchParams.get('token') || '';
   const userId = searchParams.get('userId') || '';
   const { refreshUsers } = useAuth();
@@ -37,10 +53,22 @@ export const VerifyEmailPage: React.FC = () => {
       } catch {}
     };
 
-    // קישור אמיתי מהמייל של Supabase -> אימות מול השרת
-    if (tokenHash) {
+    // מוחקים את הטוקן משורת הכתובת, כדי שלא יישאר בהיסטוריה של הדפדפן
+    if (accessToken || errorCode) {
+      window.history.replaceState(null, '', window.location.pathname);
+    }
+
+    // Supabase החזיר שגיאה (למשל קישור שפג תוקפו)
+    if (errorCode) {
+      setVerified(false);
+      setErrorMessage(SUPABASE_ERROR_MESSAGES[errorCode] || 'קישור האימות אינו תקף או שפג תוקפו');
+      return;
+    }
+
+    // Supabase אימת את המייל -> בדיקה בצד השרת שהמשתמש אכן מאומת
+    if (accessToken) {
       let cancelled = false;
-      verifyEmailWithServer(tokenHash).then((result) => {
+      verifyEmailWithServer(accessToken).then((result) => {
         if (cancelled) return;
         setVerified(result.success);
         if (result.success) celebrate();
@@ -63,7 +91,7 @@ export const VerifyEmailPage: React.FC = () => {
     } else {
       setVerified(false);
     }
-  }, [tokenHash, token, userId, refreshUsers]);
+  }, [accessToken, errorCode, token, userId, refreshUsers]);
 
   const handleResend = async (e: React.FormEvent) => {
     e.preventDefault();
