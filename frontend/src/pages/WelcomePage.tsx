@@ -90,47 +90,55 @@ export const WelcomePage: React.FC = () => {
   const passCheck = AuthService.validatePassword(regPassword);
   const passwordsMatch = regPassword.length > 0 && regPassword === regConfirmPassword;
 
-  const handleLoginSubmit = (e: React.FormEvent) => {
+const handleLoginSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoginError('');
     setLoginLoading(true);
     setResendSuccess(false);
-
-    const res = login(loginEmail, loginPassword);
-    setLoginLoading(false);
-
-    if (!res.success) {
-      if (res.isUnverified) {
-        setUnverifiedEmailForResend(res.unverifiedEmail || loginEmail);
-        setLoginError(res.error || 'החשבון טרם אומת. נא לבדוק את תיבת הדוא״ל וללחוץ על קישור האימות.');
-      } else {
-        setUnverifiedEmailForResend(null);
-        setLoginError(res.error || 'הקוד שגוי, נסי שוב');
-      }
-      return;
-    }
-
     setUnverifiedEmailForResend(null);
 
-    if (res.requires2FA && res.requiresFirstTime2FASetup && res.user) {
-      // Navigate to full 3-step 2FA setup wizard
-      navigate('/two-factor-setup', { state: { userId: res.user.id } });
-      return;
-    }
+    try {
+const response = await fetch('http://127.0.0.1:8001/login', {        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          email: loginEmail,
+          password: loginPassword,
+        }),
+      });
 
-    if (res.requires2FA && !res.requiresFirstTime2FASetup && res.user) {
-      // Prompt 6-digit TOTP code
-      setPendingUser(res.user);
-      setShow2FAPrompt(true);
-      return;
-    }
+      const data = await response.json();
 
-    // Direct login success -> navigate to role's dedicated landing screen
-    if (res.user) {
-      const targetRoute = ROLE_LANDING_ROUTES[res.user.role] || '/courses';
+      if (!response.ok) {
+        setLoginError(data.detail || 'אימייל או סיסמה שגויים');
+        setLoginLoading(false);
+        return;
+      }
+
+      const loggedInUser: User = {
+        id: data.user.id,
+        name: data.user.full_name || data.user.email,
+        email: data.user.email,
+        role: (data.user.role as UserRole) || ROLES.STUDENT,
+        department: 'מדעי המחשב',
+        isVerified: true,
+        twoFactorEnabled: false,
+        registeredAt: new Date().toISOString(),
+        assignedCourseIds: [],
+        status: 'active',
+      };
+
+      AuthService.setCurrentUser(loggedInUser);
+      refreshUsers();
+      setLoginLoading(false);
+
+      const targetRoute = ROLE_LANDING_ROUTES[loggedInUser.role] || '/courses';
       navigate(targetRoute);
+    } catch {
+      setLoginLoading(false);
+      setLoginError('שגיאת תקשורת מול השרת. ודאי ש-backend-core רץ.');
     }
   };
+   
 
   const handleResendEmail = () => {
     if (!unverifiedEmailForResend) return;
