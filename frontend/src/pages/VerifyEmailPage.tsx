@@ -1,39 +1,77 @@
 /**
  * @license
  * SPDX-License-Identifier: Apache-2.0
+ *
+ * סיפור 57 - מסך אימות כתובת דוא"ל
+ * קישור אמיתי מהמייל (token_hash) נבדק מול השרת backend-core.
+ * קישור דמה של אב-הטיפוס (token / userId) ממשיך לעבוד כמו קודם.
  */
 
 import React, { useEffect, useState } from 'react';
-import { useSearchParams, Link, useNavigate } from 'react-router-dom';
+import { useSearchParams, Link } from 'react-router-dom';
 import { AuthService } from '../services/authService';
+import { verifyEmailWithServer, resendVerificationEmail } from '../services/emailVerificationApi';
 import { useAuth } from '../context/AuthContext';
-import { CheckCircle2, AlertCircle, ArrowLeft, LogIn } from 'lucide-react';
+import { CheckCircle2, AlertCircle, ArrowLeft, LogIn, Mail } from 'lucide-react';
 import confetti from 'canvas-confetti';
 
 export const VerifyEmailPage: React.FC = () => {
   const [searchParams] = useSearchParams();
+  const tokenHash = searchParams.get('token_hash') || '';
   const token = searchParams.get('token') || '';
   const userId = searchParams.get('userId') || '';
-  const navigate = useNavigate();
   const { refreshUsers } = useAuth();
 
   const [verified, setVerified] = useState<boolean | null>(null);
+  const [errorMessage, setErrorMessage] = useState('');
+
+  // שליחה חוזרת של מייל האימות
+  const [resendEmail, setResendEmail] = useState('');
+  const [resendLoading, setResendLoading] = useState(false);
+  const [resendResult, setResendResult] = useState<{ success: boolean; message: string } | null>(null);
 
   useEffect(() => {
+    const celebrate = () => {
+      try {
+        confetti({ particleCount: 60, spread: 60, origin: { y: 0.6 } });
+      } catch {}
+    };
+
+    // קישור אמיתי מהמייל של Supabase -> אימות מול השרת
+    if (tokenHash) {
+      let cancelled = false;
+      verifyEmailWithServer(tokenHash).then((result) => {
+        if (cancelled) return;
+        setVerified(result.success);
+        if (result.success) celebrate();
+        else setErrorMessage(result.message);
+      });
+      return () => {
+        cancelled = true;
+      };
+    }
+
+    // קישור דמה של אב-הטיפוס
     const identifier = userId || token;
     if (identifier) {
       const success = AuthService.verifyEmail(identifier);
       setVerified(success);
       if (success) {
         refreshUsers();
-        try {
-          confetti({ particleCount: 60, spread: 60, origin: { y: 0.6 } });
-        } catch {}
+        celebrate();
       }
     } else {
       setVerified(false);
     }
-  }, [token, userId, refreshUsers]);
+  }, [tokenHash, token, userId, refreshUsers]);
+
+  const handleResend = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!resendEmail.trim()) return;
+    setResendLoading(true);
+    setResendResult(await resendVerificationEmail(resendEmail.trim()));
+    setResendLoading(false);
+  };
 
   return (
     <div className="max-w-md mx-auto py-16 px-4 text-center">
@@ -70,12 +108,49 @@ export const VerifyEmailPage: React.FC = () => {
 
           <div className="space-y-2">
             <h1 className="text-xl font-extrabold text-slate-900 dark:text-white">
-              קישור האימות אינו תקף או שפג תוקפו
+              {errorMessage || 'קישור האימות אינו תקף או שפג תוקפו'}
             </h1>
             <p className="text-xs text-slate-500 dark:text-slate-400 leading-relaxed">
-              לא הצלחנו לאמת את החשבון. אנא נסה/י להתחבר או בקש/י שליחה חוזרת של מייל האימות.
+              לא הצלחנו לאמת את החשבון. אפשר לבקש כאן מייל אימות חדש.
             </p>
           </div>
+
+          {/* שליחה חוזרת של מייל האימות */}
+          <form onSubmit={handleResend} className="space-y-3 text-right">
+            <label htmlFor="resend-email" className="block text-xs font-bold text-slate-700 dark:text-slate-300">
+              כתובת הדוא״ל שאיתה נרשמת
+            </label>
+            <input
+              id="resend-email"
+              type="email"
+              dir="ltr"
+              required
+              value={resendEmail}
+              onChange={(e) => setResendEmail(e.target.value)}
+              placeholder="name@example.com"
+              className="w-full px-3 py-2.5 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-sm text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-indigo-500"
+            />
+            <button
+              type="submit"
+              disabled={resendLoading}
+              className="w-full py-3 px-4 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-60 text-white font-bold rounded-xl text-xs transition-colors flex items-center justify-center gap-2"
+            >
+              <Mail className="w-4 h-4" />
+              <span>{resendLoading ? 'שולח...' : 'שליחת מייל אימות חדש'}</span>
+            </button>
+            {resendResult && (
+              <p
+                role="status"
+                className={`text-xs font-bold ${
+                  resendResult.success
+                    ? 'text-emerald-600 dark:text-emerald-400'
+                    : 'text-rose-600 dark:text-rose-400'
+                }`}
+              >
+                {resendResult.message}
+              </p>
+            )}
+          </form>
 
           <Link
             to="/"
