@@ -1,33 +1,32 @@
-from fastapi import APIRouter
+import os
+from fastapi import APIRouter, HTTPException
+from supabase import create_client, Client
 
-# Team 4 router setup - Notifications
 router = APIRouter(prefix="/notifications", tags=["Notifications"])
+
+def get_supabase() -> Client:
+    """Connect to Supabase using credentials from the .env file"""
+    url: str = os.environ.get("SUPABASE_URL")
+    key: str = os.environ.get("SUPABASE_KEY")
+    if not url or not key:
+        raise ValueError("Supabase credentials not found in environment variables")
+    return create_client(url, key)
 
 @router.get("/")
 async def get_notifications():
-    # TODO: In the future, extract user_id from Team 1's JWT
-    # TODO: In the future, fetch real data from Supabase
+    # TODO: In the future, extract the real user_id from the incoming JWT (Team 1)
+    current_user_id = "mock-user-123" 
     
-    # Mock data for immediate frontend integration and testing
-    mock_notifications = [
-        {
-            "id": "1",
-            "user_id": "mock-user-123",
-            "title": "ציון חדש הוסף",
-            "message": "קיבלת 98 בקורס תכנות מתקדם (C++)",
-            "is_read": False,
-            "link": "/courses/1/assignments",
-            "created_at": "2026-11-16T10:00:00Z"
-        },
-        {
-            "id": "2",
-            "user_id": "mock-user-123",
-            "title": "הודעת מערכת",
-            "message": "ברוכים הבאים למערכת CampuScope!",
-            "is_read": True,
-            "link": None,
-            "created_at": "2026-11-15T08:30:00Z"
-        }
-    ]
-    
-    return mock_notifications
+    try:
+        supabase = get_supabase()
+        # Fetch notifications for the specific user, ordered from newest to oldest
+        response = supabase.table("notifications") \
+            .select("*") \
+            .eq("user_id", current_user_id) \
+            .order("created_at", desc=True) \
+            .execute()
+        
+        return response.data
+    except Exception as e:
+        print(f"Database error: {e}")
+        raise HTTPException(status_code=500, detail="Failed to fetch notifications from database")
