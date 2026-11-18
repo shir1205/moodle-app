@@ -1,9 +1,10 @@
 /**
  * @license
  * SPDX-License-Identifier: Apache-2.0
- * 
+ *
  * NotificationService for CampuScope
- * Handles in-app notifications, mock email dispatch with preference enforcement,
+ * Handles in-app notifications backed by FastAPI + Supabase (backend-core),
+ * with localStorage cache/fallback, mock email dispatch with preference enforcement,
  * unread badges, and delivery analytics.
  */
 
@@ -12,6 +13,18 @@ import { StorageService } from './storage';
 import { SEED_NOTIFICATIONS, SEED_PREFERENCES } from '../data/seedData';
 import { NOTIFICATION_CONFIG } from '../config/constants';
 
+const CORE_API_URL = 'http://localhost:8001';
+
+interface BackendNotification {
+  id: number | string;
+  user_id: string;
+  title: string;
+  message: string;
+  is_read: boolean;
+  link?: string | null;
+  created_at: string;
+}
+
 export class NotificationService {
   private static init(): void {
     if (!localStorage.getItem(StorageService.keys.NOTIFICATIONS)) {
@@ -19,6 +32,63 @@ export class NotificationService {
     }
     if (!localStorage.getItem(StorageService.keys.PREFERENCES)) {
       StorageService.set(StorageService.keys.PREFERENCES, SEED_PREFERENCES);
+    }
+  }
+
+  private static mapFromBackend(row: BackendNotification): Notification {
+    return {
+      id: String(row.id),
+      userId: row.user_id,
+      type: 'lecturer_message',
+      title: row.title,
+      content: row.message,
+      link: row.link ?? undefined,
+      isRead: Boolean(row.is_read),
+      createdAt: row.created_at,
+      channel: 'in_app',
+    };
+  }
+
+  /**
+   * Fetch notifications for a user from backend-core (Supabase) and sync local cache.
+   * Falls back silently to localStorage if the backend is unavailable.
+   */
+  static async fetchNotifications(userId: string): Promise<Notification[]> {
+    this.init();
+    try {
+      const response = await fetch(`${CORE_API_URL}/notifications/`, {
+        method: 'GET',
+        headers: {
+          'X-User-Id': userId,
+        },
+      });
+
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}`);
+      }
+
+      const rows: unknown = await response.json();
+      if (!Array.isArray(rows)) {
+        throw new Error('Unexpected response format from /notifications/');
+      }
+
+      const mapped = (rows as BackendNotification[]).map((row) => this.mapFromBackend(row));
+
+      // Preserve other users' cache and non-numeric local/seed notifications for this user
+      const all = StorageService.get<Notification[]>(StorageService.keys.NOTIFICATIONS, []);
+      const otherUsers = all.filter((n) => n.userId !== userId);
+      const localOnly = all.filter(
+        (n) => n.userId === userId && !/^\d+$/.test(n.id)
+      );
+      const mergedForUser = [...mapped, ...localOnly].sort(
+        (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+      );
+
+      StorageService.set(StorageService.keys.NOTIFICATIONS, [...mergedForUser, ...otherUsers]);
+      return mergedForUser;
+    } catch (error) {
+      console.warn('Backend notifications unavailable, using local cache:', error);
+      return this.getNotifications(userId);
     }
   }
 
@@ -41,6 +111,13 @@ export class NotificationService {
     const all = StorageService.get<Notification[]>(StorageService.keys.NOTIFICATIONS, []);
     const updated = all.map((n) => (n.id === notificationId ? { ...n, isRead: true } : n));
     StorageService.set(StorageService.keys.NOTIFICATIONS, updated);
+
+    // Sync to Supabase only when ID is a numeric backend (int8) record
+    if (/^\d+$/.test(notificationId)) {
+      fetch(`${CORE_API_URL}/notifications/${notificationId}/read`, {
+        method: 'PATCH',
+      }).catch((err) => console.warn('Failed to sync markAsRead to backend:', err));
+    }
   }
 
   static markAllAsRead(userId: string): void {
@@ -48,6 +125,11 @@ export class NotificationService {
     const all = StorageService.get<Notification[]>(StorageService.keys.NOTIFICATIONS, []);
     const updated = all.map((n) => (n.userId === userId ? { ...n, isRead: true } : n));
     StorageService.set(StorageService.keys.NOTIFICATIONS, updated);
+
+    fetch(`${CORE_API_URL}/notifications/read-all`, {
+      method: 'PATCH',
+      headers: { 'X-User-Id': userId },
+    }).catch((err) => console.warn('Failed to sync markAllAsRead to backend:', err));
   }
 
   static getPreferences(userId: string): NotificationPreference {
@@ -119,10 +201,12 @@ export class NotificationService {
     }
 
     // Simulate email delivery with high success rate
-    const emailSuccess = Math.random() * 100 <= NOTIFICATION_CONFIG.SIMULATED_EMAIL_SUCCESS_RATE_PERCENT;
+    const emailSuccess =
+      Math.random() * 100 <= NOTIFICATION_CONFIG.SIMULATED_EMAIL_SUCCESS_RATE_PERCENT;
 
+    const tempId = `notif-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
     const newNotification: Notification = {
-      id: `notif-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+      id: tempId,
       userId: params.userId,
       type: params.type,
       title: params.title,
@@ -138,12 +222,34 @@ export class NotificationService {
     all.unshift(newNotification);
     StorageService.set(StorageService.keys.NOTIFICATIONS, all);
 
+    // Persist to Supabase in the background and reconcile the temporary ID to prevent duplicates
+    fetch(`${CORE_API_URL}/notifications/`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        user_id: params.userId,
+        title: params.title,
+        message: params.content,
+        link: params.link ?? null,
+      }),
+    })
+      .then((res) => (res.ok ? res.json() : null))
+      .then((saved: BackendNotification | null) => {
+        if (saved && saved.id !== undefined) {
+          const current = StorageService.get<Notification[]>(StorageService.keys.NOTIFICATIONS, []);
+          const reconciled = current.map((n) =>
+            n.id === tempId ? { ...n, id: String(saved.id) } : n
+          );
+          StorageService.set(StorageService.keys.NOTIFICATIONS, reconciled);
+        }
+      })
+      .catch((err) => console.warn('Failed to persist notification to backend:', err));
+
     // If email sent, also record to mock inbox for testing
     if (shouldSendEmail) {
-      const inbox = StorageService.get<Array<{ id: string; toUserId: string; subject: string; body: string; sentAt: string }>>(
-        StorageService.keys.MOCK_INBOX,
-        []
-      );
+      const inbox = StorageService.get<
+        Array<{ id: string; toUserId: string; subject: string; body: string; sentAt: string }>
+      >(StorageService.keys.MOCK_INBOX, []);
       inbox.unshift({
         id: `email-${Date.now()}`,
         toUserId: params.userId,
@@ -171,7 +277,8 @@ export class NotificationService {
     const total = todayNotifs.length || all.length; // fallback to all if seeded on different date
     const emails = all.filter((n) => n.channel === 'both' || n.emailStatus !== undefined);
     const delivered = emails.filter((n) => n.emailStatus === 'delivered');
-    const successRate = emails.length > 0 ? Math.round((delivered.length / emails.length) * 100) : 98;
+    const successRate =
+      emails.length > 0 ? Math.round((delivered.length / emails.length) * 100) : 98;
 
     return {
       todayTotal: Math.max(total, 14),
