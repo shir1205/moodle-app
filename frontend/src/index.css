@@ -1,0 +1,87 @@
+@import "tailwindcss";
+
+:root {
+  --primary: #4F46E5;
+  --primary-hover: #4338CA;
+  --primary-light: #EEF2FF;
+  --secondary: #14B8A6;
+  --secondary-hover: #0D9488;
+  --secondary-light: #F0FDFA;
+  --accent: #FB7185;
+  --gold: #F59E0B;
+  --bg-page: #F8FAFC;
+  --bg-surface: #FFFFFF;
+  --bg-card: #FFFFFF;
+  --border-subtle: #E2E8F0;
+  --text-primary: #0F172A;
+  --text-secondary: #475569;
+  --text-muted: #94A3B8;
+  --success: #22C55E;
+  --warning: #EAB308;
+  --danger: #EF4444;
+  font-family: 'Heebo', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+}
+
+.dark {
+  --primary: #6366F1;
+  --primary-hover: #4F46E5;
+  --primary-light: #1E1B4B;
+  --secondary: #2DD4BF;
+  --secondary-hover: #14B8A6;
+  --secondary-light: #134E4A;
+  --accent: #FDA4AF;
+  --gold: #FBBF24;
+  --bg-page: #090D16;
+  --bg-surface: #0F172A;
+  --bg-card: #1E293B;
+  --border-subtle: #334155;
+  --text-primary: #F8FAFC;
+  --text-secondary: #94A3B8;
+  --text-muted: #64748B;
+  --success: #4ADE80;
+  --warning: #FACC15;
+  --danger: #F87171;
+}
+
+body {
+  font-family: 'Heebo', sans-serif;
+  background-color: var(--bg-page);
+  color: var(--text-primary);
+  direction: rtl;
+  min-height: 100vh;
+}
+
+h1, h2, h3, h4, h5, h6 {
+  font-family: 'Rubik', sans-serif;
+}
+
+/* Tabular figures for numbers */
+.tabular-nums {
+  font-variant-numeric: tabular-nums;
+}
+
+/* Custom scrollbars */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(148, 163, 184, 0.4);
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(148, 163, 184, 0.6);
+}
+
+/* Glassmorphism utility */
+.glass-header {
+  background: rgba(255, 255, 255, 0.85);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+}
+.dark .glass-header {
+  background: rgba(15, 23, 42, 0.85);
+}
