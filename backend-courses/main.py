@@ -169,3 +169,77 @@ def get_course_materials(course_id: str):
         .execute()
     )
     return res.data
+
+    # =====================================================================
+# Stories 22 & 25: Draft Assignments & Active Fetch (Tasks 113, 115)
+# =====================================================================
+class AssignmentCreate(BaseModel):
+    course_id: str
+    unit_id: Optional[str] = None
+    title: str = Field(..., min_length=3)
+    instructions: Optional[str] = ""
+    due_date: datetime
+    max_grade: int = Field(default=100, ge=1)
+    status: str = Field(default="draft")
+
+
+@app.post("/api/assignments", status_code=201)
+def create_assignment(assignment: AssignmentCreate, user: dict = Depends(get_current_user)):
+    ensure_db()
+    if user["role"] not in {"LECTURER", "ADMIN"}:
+        raise HTTPException(status_code=403, detail="Only lecturers can create assignments.")
+
+    normalized_status = assignment.status.lower()
+    if normalized_status not in {"draft", "published"}:
+        raise HTTPException(status_code=400, detail="סטטוס לא תקין. יש לבחור draft או published.")
+
+    now_utc = datetime.now(timezone.utc)
+    due_utc = assignment.due_date if assignment.due_date.tzinfo else assignment.due_date.replace(tzinfo=timezone.utc)
+
+    if normalized_status == "published" and due_utc <= now_utc:
+        raise HTTPException(status_code=400, detail="לא ניתן לפרסם מטלה שתאריך ההגשה שלה כבר עבר.")
+
+    payload = assignment.model_dump()
+    payload["id"] = f"assign-{uuid.uuid4().hex[:8]}"
+    payload["status"] = normalized_status
+    payload["due_date"] = due_utc.isoformat()
+    payload["created_by"] = user["user_id"]
+
+    res = supabase.table("assignments").insert(payload).execute()
+    return res.data[0]
+
+
+@app.patch("/api/assignments/{assignment_id}/publish")
+def publish_draft_assignment(assignment_id: str, user: dict = Depends(get_current_user)):
+    ensure_db()
+    if user["role"] not in {"LECTURER", "ADMIN"}:
+        raise HTTPException(status_code=403, detail="Only lecturers can publish assignments.")
+
+    existing = supabase.table("assignments").select("*").eq("id", assignment_id).execute()
+    if not existing.data:
+        raise HTTPException(status_code=404, detail="המטלה לא נמצאה.")
+
+    due_utc = datetime.fromisoformat(existing.data[0]["due_date"].replace("Z", "+00:00"))
+    if due_utc <= datetime.now(timezone.utc):
+        raise HTTPException(status_code=400, detail="לא ניתן לפרסם מטלה שתאריך היעד שלה בעבר.")
+
+    res = (
+        supabase.table("assignments")
+        .update({"status": "published"})
+        .eq("id", assignment_id)
+        .execute()
+    )
+    return res.data[0]
+
+
+@app.get("/api/courses/{course_id}/assignments")
+def get_course_assignments(course_id: str, user: dict = Depends(get_current_user)):
+    ensure_db()
+    query = supabase.table("assignments").select("*").eq("course_id", course_id)
+
+    # Students only see published assignments (drafts are hidden)
+    if user["role"] == "STUDENT":
+        query = query.eq("status", "published")
+
+    res = query.order("due_date", desc=False).execute()
+    return res.data
