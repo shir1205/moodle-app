@@ -15,6 +15,7 @@ interface AuthContextType {
   role: UserRole | null;
   unreadCount: number;
   login: (email: string, pass: string) => ReturnType<typeof AuthService.login>;
+  loginWithBackendUser: (backendUser: { id: string; email: string; full_name?: string; role: string }) => void;
   logout: () => void;
   switchUser: (userId: string) => User | null;
   updateProfile: (data: { name?: string; department?: string; avatarUrl?: string }) => boolean;
@@ -29,6 +30,7 @@ const AuthContext = createContext<AuthContextType>({
   role: null,
   unreadCount: 0,
   login: () => ({ success: false }),
+  loginWithBackendUser: () => {},
   logout: () => {},
   switchUser: () => null,
   updateProfile: () => false,
@@ -70,6 +72,26 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
     return result;
   };
+  const loginWithBackendUser = (backendUser: { id: string; email: string; full_name?: string; role: string }) => {
+  const mappedUser: User = {
+    id: backendUser.id,
+    name: backendUser.full_name || backendUser.email.split('@')[0],
+    email: backendUser.email,
+    role: (backendUser.role as UserRole) || 'student',
+    department: 'מדעי המחשב',
+    avatarUrl: `https://api.dicebear.com/7.x/initials/svg?seed=${encodeURIComponent(backendUser.full_name || backendUser.email)}`,
+    isVerified: true,
+    twoFactorEnabled: false,
+    hasSetupTwoFactor: false,
+    registeredAt: new Date().toISOString(),
+    assignedCourseIds: ['course-1', 'course-2'],
+    status: 'active',
+  };
+  AuthService.setCurrentUser(mappedUser);
+  setCurrentUser(mappedUser);
+  refreshUsers();
+  refreshUnreadCount();
+};
 
   const logout = () => {
     AuthService.logout();
@@ -113,6 +135,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         role: currentUser ? currentUser.role : null,
         unreadCount,
         login,
+        loginWithBackendUser,
         logout,
         switchUser,
         updateProfile,
