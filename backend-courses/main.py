@@ -243,3 +243,70 @@ def get_course_assignments(course_id: str, user: dict = Depends(get_current_user
 
     res = query.order("due_date", desc=False).execute()
     return res.data
+
+    # =====================================================================
+# Story 26: Submit & Replace Solution Before Deadline (Task 118)
+# =====================================================================
+ALLOWED_SUBMISSION_EXTENSIONS = {"PDF", "ZIP", "PY", "JAVA", "CS", "TXT"}
+
+
+@app.post("/api/assignments/{assignment_id}/submit", status_code=201)
+async def submit_or_replace_solution(
+    assignment_id: str,
+    file: UploadFile = File(...),
+    user: dict = Depends(get_current_user),
+):
+    ensure_db()
+    assign_res = supabase.table("assignments").select("*").eq("id", assignment_id).execute()
+    if not assign_res.data:
+        raise HTTPException(status_code=404, detail="המטלה לא נמצאה.")
+
+    assignment = assign_res.data[0]
+    if assignment["status"].lower() != "published":
+        raise HTTPException(status_code=400, detail="לא ניתן להגיש פתרון למטלה שנמצאת במצב טיוטה.")
+
+    now_utc = datetime.now(timezone.utc)
+    due_utc = datetime.fromisoformat(assignment["due_date"].replace("Z", "+00:00"))
+    if now_utc > due_utc:
+        raise HTTPException(status_code=403, detail="מועד ההגשה חלף. אזור ההעלאה ננעל.")
+
+    ext = file.filename.split(".")[-1].upper() if "." in file.filename else ""
+    if ext not in ALLOWED_SUBMISSION_EXTENSIONS:
+        raise HTTPException(status_code=400, detail=f"סוג קובץ לא מורשה להגשה: {ext}")
+
+    content = await file.read()
+    storage_path = f"{assignment_id}/{user['user_id']}/{int(now_utc.timestamp())}_{file.filename}"
+    supabase.storage.from_("submissions").upload(
+        path=storage_path,
+        file=content,
+        file_options={"content-type": file.content_type or "application/octet-stream"},
+    )
+    public_url = supabase.storage.from_("submissions").get_public_url(storage_path)
+
+    submission_data = {
+        "id": f"sub-{uuid.uuid4().hex[:8]}",
+        "assignment_id": assignment_id,
+        "student_id": user["user_id"],
+        "file_name": file.filename,
+        "file_url": public_url,
+        "status": "submitted",
+        "submitted_at": now_utc.isoformat(),
+        "updated_at": now_utc.isoformat(),
+    }
+
+    res = (
+        supabase.table("submissions")
+        .upsert(submission_data, on_conflict="assignment_id,student_id")
+        .execute()
+    )
+    return res.data[0]
+
+
+@app.get("/api/assignments/{assignment_id}/submissions")
+def get_assignment_submissions(assignment_id: str, student_id: Optional[str] = None):
+    ensure_db()
+    query = supabase.table("submissions").select("*").eq("assignment_id", assignment_id)
+    if student_id:
+        query = query.eq("student_id", student_id)
+    res = query.execute()
+    return res.data
