@@ -12,8 +12,7 @@ import { Notification, NotificationPreference, NotificationType } from '../types
 import { StorageService } from './storage';
 import { SEED_NOTIFICATIONS, SEED_PREFERENCES } from '../data/seedData';
 import { NOTIFICATION_CONFIG } from '../config/constants';
-
-const CORE_API_URL = 'http://localhost:8001';
+import { authFetch, getAuthToken } from './apiClient';
 
 interface BackendNotification {
   id: number | string;
@@ -51,16 +50,17 @@ export class NotificationService {
 
   /**
    * Fetch notifications for a user from backend-core (Supabase) and sync local cache.
-   * Falls back silently to localStorage if the backend is unavailable.
+   * Falls back silently to localStorage if the user has no JWT or backend is unavailable.
    */
   static async fetchNotifications(userId: string): Promise<Notification[]> {
     this.init();
+    if (!getAuthToken()) {
+      return this.getNotifications(userId);
+    }
+
     try {
-      const response = await fetch(`${CORE_API_URL}/notifications/`, {
+      const response = await authFetch('/notifications/', {
         method: 'GET',
-        headers: {
-          'X-User-Id': userId,
-        },
       });
 
       if (!response.ok) {
@@ -112,9 +112,9 @@ export class NotificationService {
     const updated = all.map((n) => (n.id === notificationId ? { ...n, isRead: true } : n));
     StorageService.set(StorageService.keys.NOTIFICATIONS, updated);
 
-    // Sync to Supabase only when ID is a numeric backend (int8) record
-    if (/^\d+$/.test(notificationId)) {
-      fetch(`${CORE_API_URL}/notifications/${notificationId}/read`, {
+    // Sync to Supabase only when ID is a numeric backend (int8) record and user has JWT
+    if (/^\d+$/.test(notificationId) && getAuthToken()) {
+      authFetch(`/notifications/${notificationId}/read`, {
         method: 'PATCH',
       }).catch((err) => console.warn('Failed to sync markAsRead to backend:', err));
     }
@@ -126,10 +126,11 @@ export class NotificationService {
     const updated = all.map((n) => (n.userId === userId ? { ...n, isRead: true } : n));
     StorageService.set(StorageService.keys.NOTIFICATIONS, updated);
 
-    fetch(`${CORE_API_URL}/notifications/read-all`, {
-      method: 'PATCH',
-      headers: { 'X-User-Id': userId },
-    }).catch((err) => console.warn('Failed to sync markAllAsRead to backend:', err));
+    if (getAuthToken()) {
+      authFetch('/notifications/read-all', {
+        method: 'PATCH',
+      }).catch((err) => console.warn('Failed to sync markAllAsRead to backend:', err));
+    }
   }
 
   static getPreferences(userId: string): NotificationPreference {
@@ -223,27 +224,28 @@ export class NotificationService {
     StorageService.set(StorageService.keys.NOTIFICATIONS, all);
 
     // Persist to Supabase in the background and reconcile the temporary ID to prevent duplicates
-    fetch(`${CORE_API_URL}/notifications/`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        user_id: params.userId,
-        title: params.title,
-        message: params.content,
-        link: params.link ?? null,
-      }),
-    })
-      .then((res) => (res.ok ? res.json() : null))
-      .then((saved: BackendNotification | null) => {
-        if (saved && saved.id !== undefined) {
-          const current = StorageService.get<Notification[]>(StorageService.keys.NOTIFICATIONS, []);
-          const reconciled = current.map((n) =>
-            n.id === tempId ? { ...n, id: String(saved.id) } : n
-          );
-          StorageService.set(StorageService.keys.NOTIFICATIONS, reconciled);
-        }
+    if (getAuthToken()) {
+      authFetch('/notifications/', {
+        method: 'POST',
+        body: JSON.stringify({
+          user_id: params.userId,
+          title: params.title,
+          message: params.content,
+          link: params.link ?? null,
+        }),
       })
-      .catch((err) => console.warn('Failed to persist notification to backend:', err));
+        .then((res) => (res.ok ? res.json() : null))
+        .then((saved: BackendNotification | null) => {
+          if (saved && saved.id !== undefined) {
+            const current = StorageService.get<Notification[]>(StorageService.keys.NOTIFICATIONS, []);
+            const reconciled = current.map((n) =>
+              n.id === tempId ? { ...n, id: String(saved.id) } : n
+            );
+            StorageService.set(StorageService.keys.NOTIFICATIONS, reconciled);
+          }
+        })
+        .catch((err) => console.warn('Failed to persist notification to backend:', err));
+    }
 
     // If email sent, also record to mock inbox for testing
     if (shouldSendEmail) {
