@@ -112,37 +112,51 @@ def get_course_units(course_id: str):
 # ========================================================
 # Story 20: Course Materials Upload & Fetch (Tasks 109, 110)
 # ========================================================
-@app.post("/api/courses/{course_id}/materials")
+MAX_FILE_SIZE_BYTES = 20 * 1024 * 1024  # 20MB
+
+@app.post("/api/courses/{course_id}/materials", status_code=201)
 async def upload_course_material(
     course_id: str,
     unit_id: str = Form(...),
     title: str = Form(...),
     description: str = Form(""),
     uploaded_by: str = Form("lecturer-michal"),
+    role: Optional[str] = Form(None),
+    x_user_role: Optional[str] = Header(None, alias="X-User-Role"),
     file: UploadFile = File(...),
 ):
+    # 1. בדיקת הרשאת מרצה (תומך גם ב-Header, גם בשדה Form וגם במזהה המשתמש)
+    effective_role = (x_user_role or role or "").strip().upper()
+    is_lecturer_id = uploaded_by.lower().startswith("lecturer")
+    if effective_role and effective_role != "LECTURER":
+        raise HTTPException(status_code=403, detail="רק מרצה רשאי להעלות חומרי לימוד")
+    if not effective_role and not is_lecturer_id:
+        raise HTTPException(status_code=403, detail="רק מרצה רשאי להעלות חומרי לימוד")
+
+    # 2. בדיקת סיומת קובץ
     allowed_exts = {".pdf", ".docx", ".pptx"}
     file_ext = os.path.splitext(file.filename or "")[1].lower()
     if file_ext not in allowed_exts:
         raise HTTPException(status_code=400, detail="פורמט קובץ לא נתמך (מותר PDF/DOCX/PPTX)")
 
+    # 3. קריאת הקובץ ובדיקת הגבלת גודל של 20MB
     file_bytes = await file.read()
+    if len(file_bytes) > MAX_FILE_SIZE_BYTES:
+        raise HTTPException(status_code=413, detail="גודל הקובץ חורג מהמותר (מקסימום 20MB)")
 
-    # יצירת שם קובץ בטוח באנגלית עבור Supabase Storage
+    # 4. יצירת שם קובץ בטוח באנגלית עבור Supabase Storage
     safe_filename = f"{int(time.time())}_{uuid.uuid4().hex[:8]}{file_ext}"
     storage_path = f"{course_id}/{unit_id}/{safe_filename}"
 
-    # העלאה ל-Storage
     supabase.storage.from_("materials").upload(
         storage_path,
         file_bytes,
         {"content-type": file.content_type or "application/octet-stream"},
     )
 
-    # קבלת הקישור הציבורי
     public_url = supabase.storage.from_("materials").get_public_url(storage_path)
 
-    # שמירת הרשומה בטבלה (עם השם המקורי לתצוגה)
+    # 5. שמירת הרשומה בטבלת course_materials
     record = {
         "id": f"mat-{uuid.uuid4().hex[:8]}",
         "course_id": course_id,
