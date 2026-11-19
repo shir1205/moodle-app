@@ -11,6 +11,7 @@ import { User, AuditLogEntry } from '../types';
 import { StorageService } from './storage';
 import { SEED_USERS, SEED_AUDIT_LOGS } from '../data/seedData';
 import { AUTH_LIMITS, ROLES, UserRole } from '../config/constants';
+import { clearAuthSession } from './apiClient';
 
 export interface VerificationToken {
   token: string;
@@ -643,6 +644,7 @@ export class AuthService {
   }
 
   static logout(): void {
-    StorageService.remove(StorageService.keys.CURRENT_USER);
-  }
+  StorageService.remove(StorageService.keys.CURRENT_USER);
+  clearAuthSession();
+}
 }
