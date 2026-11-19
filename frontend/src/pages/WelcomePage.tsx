@@ -30,7 +30,7 @@ import {
 import { ForgotPasswordModal } from '../components/auth/ForgotPasswordModal';
 
 export const WelcomePage: React.FC = () => {
-  const { currentUser, login, switchUser, refreshUsers } = useAuth();
+  const { currentUser, login, loginWithBackendUser, switchUser, refreshUsers } = useAuth();
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
 
@@ -90,46 +90,49 @@ export const WelcomePage: React.FC = () => {
   // Live password validation
   const passCheck = AuthService.validatePassword(regPassword);
   const passwordsMatch = regPassword.length > 0 && regPassword === regConfirmPassword;
-
-  const handleLoginSubmit = (e: React.FormEvent) => {
+const handleLoginSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoginError('');
     setLoginLoading(true);
     setResendSuccess(false);
-
-    const res = login(loginEmail, loginPassword);
-    setLoginLoading(false);
-
-    if (!res.success) {
-      if (res.isUnverified) {
-        setUnverifiedEmailForResend(res.unverifiedEmail || loginEmail);
-        setLoginError(res.error || 'החשבון טרם אומת. נא לבדוק את תיבת הדוא״ל וללחוץ על קישור האימות.');
-      } else {
-        setUnverifiedEmailForResend(null);
-        setLoginError(res.error || 'הקוד שגוי, נסי שוב');
-      }
-      return;
-    }
-
     setUnverifiedEmailForResend(null);
 
-    if (res.requires2FA && res.requiresFirstTime2FASetup && res.user) {
-      // Navigate to full 3-step 2FA setup wizard
-      navigate('/two-factor-setup', { state: { userId: res.user.id } });
-      return;
-    }
+    try {
+      const response = await fetch('http://127.0.0.1:8001/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          email: loginEmail,
+          password: loginPassword,
+        }),
+      });
 
-    if (res.requires2FA && !res.requiresFirstTime2FASetup && res.user) {
-      // Prompt 6-digit TOTP code
-      setPendingUser(res.user);
-      setShow2FAPrompt(true);
-      return;
-    }
+      const data = await response.json();
 
-    // Direct login success -> navigate to role's dedicated landing screen
-    if (res.user) {
-      const targetRoute = ROLE_LANDING_ROUTES[res.user.role] || '/courses';
+      if (!response.ok) {
+        setLoginError(data.detail || 'אימייל או סיסמה שגויים');
+        setLoginLoading(false);
+        return;
+      }
+
+      // שמירת ה-JWT Token ופרטי המשתמש ב-localStorage (סיפור 67)
+      if (data.access_token) {
+        localStorage.setItem('campuscope_token', data.access_token);
+        localStorage.setItem('campuscope_user', JSON.stringify(data.user));
+      }
+      if (data.user) {
+        loginWithBackendUser(data.user);
+      }
+
+      setLoginLoading(false);
+
+      // ניווט למסך הראשי לפי תפקיד המשתמש
+    const userRole = (data.user?.role || 'student') as keyof typeof ROLE_LANDING_ROUTES;
+const targetRoute = ROLE_LANDING_ROUTES[userRole] || '/courses';
       navigate(targetRoute);
+    } catch {
+      setLoginLoading(false);
+      setLoginError('שגיאת תקשורת מול השרת. ודאי ש-backend-core פועל על פורט 8001.');
     }
   };
 
