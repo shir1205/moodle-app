@@ -167,6 +167,7 @@ export const AiAssistantPage: React.FC = () => {
   const [chatInput, setChatInput] = useState('');
   const [chatLoading, setChatLoading] = useState(false);
   const [chatNotice, setChatNotice] = useState('');
+  const [chatCanRetry, setChatCanRetry] = useState(false);
   const chatBottomRef = useRef<HTMLDivElement>(null);
 
   // 2. SUMMARY GENERATOR STATE
@@ -199,6 +200,43 @@ export const AiAssistantPage: React.FC = () => {
     }
   }, [chatMessages, activeTab]);
 
+  // Send a chat history to the AI and append the reply.
+  // Story 45: if the AI is unavailable, keep the question and offer "נסה שוב".
+  const sendChatHistory = async (history: AiChatMessage[]) => {
+    setChatLoading(true);
+    setChatNotice('');
+    setChatCanRetry(false);
+
+    try {
+      const res = await AiService.sendChatMessage(
+        history,
+        selectedCourse ? `${selectedCourse.code}: ${selectedCourse.title}` : undefined
+      );
+
+      setChatMessages([
+        ...history,
+        {
+          id: `reply-${Date.now()}`,
+          role: 'assistant',
+          content: res.reply,
+          timestamp: new Date().toISOString(),
+        },
+      ]);
+      if (res.isFallback) {
+        setChatNotice(res.warning || AI_CONFIG.BUSY_FALLBACK_MESSAGE);
+        setChatCanRetry(true);
+      } else if (res.warning) {
+        setChatNotice(res.warning);
+      }
+    } catch {
+      setChatMessages(history);
+      setChatNotice(AI_CONFIG.BUSY_FALLBACK_MESSAGE);
+      setChatCanRetry(true);
+    } finally {
+      setChatLoading(false);
+    }
+  };
+
   // Handle Chat Submit
   const handleChatSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -214,30 +252,20 @@ export const AiAssistantPage: React.FC = () => {
     const newHistory = [...chatMessages, userMsg];
     setChatMessages(newHistory);
     setChatInput('');
-    setChatLoading(true);
-    setChatNotice('');
+    await sendChatHistory(newHistory);
+  };
 
-    try {
-      const res = await AiService.sendChatMessage(
-        newHistory,
-        selectedCourse ? `${selectedCourse.code}: ${selectedCourse.title}` : undefined
-      );
-
-      setChatMessages((prev) => [
-        ...prev,
-        {
-          id: `reply-${Date.now()}`,
-          role: 'assistant',
-          content: res.reply,
-          timestamp: new Date().toISOString(),
-        },
-      ]);
-      if (res.warning) setChatNotice(res.warning);
-    } catch {
-      setChatNotice(AI_CONFIG.BUSY_FALLBACK_MESSAGE);
-    } finally {
-      setChatLoading(false);
-    }
+  // Story 45: resend the last question after the AI was unavailable
+  const handleChatRetry = async () => {
+    if (chatLoading) return;
+    let lastUserIndex = -1;
+    chatMessages.forEach((m, i) => {
+      if (m.role === 'user') lastUserIndex = i;
+    });
+    if (lastUserIndex === -1) return;
+    const historyUpToQuestion = chatMessages.slice(0, lastUserIndex + 1);
+    setChatMessages(historyUpToQuestion);
+    await sendChatHistory(historyUpToQuestion);
   };
 
   // Handle Summary Submit
@@ -407,6 +435,17 @@ export const AiAssistantPage: React.FC = () => {
             <div className="p-2.5 bg-amber-50 dark:bg-amber-950/50 border-b border-amber-200 dark:border-amber-900 text-xs text-amber-800 dark:text-amber-200 flex items-center justify-center gap-2">
               <AlertCircle className="w-3.5 h-3.5" />
               <span>{chatNotice}</span>
+              {chatCanRetry && (
+                <button
+                  type="button"
+                  onClick={handleChatRetry}
+                  disabled={chatLoading}
+                  className="ms-2 px-2.5 py-1 rounded-lg bg-amber-600 hover:bg-amber-700 text-white font-semibold flex items-center gap-1 disabled:opacity-50"
+                >
+                  <RotateCcw className="w-3 h-3" />
+                  <span>נסה שוב</span>
+                </button>
+              )}
             </div>
           )}
 

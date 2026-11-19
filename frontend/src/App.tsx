@@ -12,7 +12,7 @@ import { AppLayout } from './components/layout/AppLayout';
 import { ProtectedRoute } from './components/auth/ProtectedRoute';
 import { ROLES } from './config/constants';
 
-// Pages
+// Pages & Components
 import { WelcomePage } from './pages/WelcomePage';
 import { TwoFactorAuthPage } from './pages/TwoFactorAuthPage';
 import { CoursesPage } from './pages/CoursesPage';
@@ -32,6 +32,7 @@ import { ProfilePage } from './pages/ProfilePage';
 import { UnauthorizedPage } from './pages/UnauthorizedPage';
 import { MockInboxPage } from './pages/MockInboxPage';
 import { VerifyEmailPage } from './pages/VerifyEmailPage';
+import { CourseContentWorkspace } from './components/CourseContentWorkspace';
 
 export default function App() {
   return (
@@ -65,6 +66,17 @@ export default function App() {
                     </ProtectedRoute>
                   }
                 />
+
+                {/* הנתיב של צוות 2 */}
+                <Route
+                  path="courses/:courseId/team2-live"
+                  element={
+                    <ProtectedRoute>
+                      <CourseContentWorkspace />
+                    </ProtectedRoute>
+                  }
+                />
+
                 <Route
                   path="courses/:courseId/assignments/:assignmentId"
                   element={
