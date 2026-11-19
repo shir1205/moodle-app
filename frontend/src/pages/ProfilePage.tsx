@@ -3,11 +3,14 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { useToast } from '../context/ToastContext';
 import { AuthService } from '../services/authService';
-import { ROLE_LABELS } from '../config/constants';
+import { ROLE_LABELS, UserRole } from '../config/constants';
+import { fetchMyProfile, ServerProfile } from '../services/profileApi';
+import { clearAuthSession } from '../services/apiClient';
 import {
   User,
   Building,
@@ -19,11 +22,13 @@ import {
   Lock,
   AlertCircle,
   KeyRound,
+  CalendarDays,
 } from 'lucide-react';
 
 export const ProfilePage: React.FC = () => {
   const { currentUser, updateProfile, changePassword } = useAuth();
   const { showToast } = useToast();
+  const navigate = useNavigate();
 
   const [name, setName] = useState(currentUser?.name || '');
   const [department, setDepartment] = useState(currentUser?.department || '');
@@ -39,6 +44,36 @@ export const ProfilePage: React.FC = () => {
   const [confirmPassword, setConfirmPassword] = useState('');
   const [passwordError, setPasswordError] = useState('');
   const [isUpdatingPassword, setIsUpdatingPassword] = useState(false);
+
+  // סיפור 61: פרטי הפרופיל מהשרת (GET /profile עם JWT)
+  const [serverProfile, setServerProfile] = useState<ServerProfile | null>(null);
+  const [profileError, setProfileError] = useState('');
+
+  useEffect(() => {
+    let cancelled = false;
+    fetchMyProfile().then((result) => {
+      if (cancelled) return;
+      if (result.status === 'ok') {
+        setServerProfile(result.profile);
+        if (result.profile.full_name) setName(result.profile.full_name);
+        if (result.profile.department) setDepartment(result.profile.department);
+        if (result.profile.avatar_url) setAvatarUrl(result.profile.avatar_url);
+      } else if (result.status === 'unauthorized') {
+        clearAuthSession();
+        showToast(result.message, 'error');
+        navigate('/');
+      } else if (result.status === 'error') {
+        setProfileError(result.message);
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [navigate, showToast]);
+
+  const displayEmail = serverProfile?.email || currentUser?.email || '';
+  const displayRole = (serverProfile?.role || currentUser?.role) as UserRole | undefined;
+  const registeredAt = serverProfile?.created_at || currentUser?.registeredAt;
 
   // Live password validation
   const passCheck = AuthService.validatePassword(newPassword);
@@ -122,6 +157,16 @@ export const ProfilePage: React.FC = () => {
         </p>
       </div>
 
+      {profileError && (
+        <div
+          role="alert"
+          className="flex items-center gap-2 p-3 rounded-xl bg-rose-50 dark:bg-rose-950/40 text-rose-700 dark:text-rose-300 text-xs font-bold"
+        >
+          <AlertCircle className="w-4 h-4 shrink-0" />
+          <span>{profileError}</span>
+        </div>
+      )}
+
       {/* Profile Details Card */}
       <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 p-6 sm:p-8 shadow-sm space-y-6">
         {/* Avatar Section */}
@@ -153,11 +198,17 @@ export const ProfilePage: React.FC = () => {
             <h2 className="text-lg font-bold text-slate-900 dark:text-white">{name}</h2>
             <div className="text-xs text-slate-400 flex items-center justify-center sm:justify-start gap-1">
               <Mail className="w-3.5 h-3.5" />
-              <span>{currentUser.email}</span>
+              <span>{displayEmail}</span>
             </div>
+            {registeredAt && (
+              <div className="text-xs text-slate-400 flex items-center justify-center sm:justify-start gap-1">
+                <CalendarDays className="w-3.5 h-3.5" />
+                <span>נרשם/ה ב-{new Date(registeredAt).toLocaleDateString('he-IL')}</span>
+              </div>
+            )}
             <div className="flex items-center justify-center sm:justify-start gap-2 pt-1">
               <span className="text-[11px] font-bold px-2 py-0.5 rounded bg-indigo-50 dark:bg-indigo-950/60 text-indigo-700 dark:text-indigo-300">
-                {ROLE_LABELS[currentUser.role]}
+                {(displayRole && ROLE_LABELS[displayRole]) || displayRole}
               </span>
               {currentUser.twoFactorEnabled && (
                 <span className="text-[11px] font-bold px-2 py-0.5 rounded bg-teal-50 dark:bg-teal-950/60 text-teal-700 dark:text-teal-300 flex items-center gap-1">
