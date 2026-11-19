@@ -46,6 +46,14 @@ export class AiService {
         messages: messages.map((m) => ({ role: m.role, content: m.content })),
         courseContext,
       });
+      // Story 45: the server marks a backup answer with fallback: true
+      if (result.fallback) {
+        return {
+          reply: result.reply || result.answer || AI_CONFIG.BUSY_FALLBACK_MESSAGE,
+          isFallback: true,
+          warning: AI_CONFIG.BUSY_FALLBACK_MESSAGE,
+        };
+      }
       return { reply: result.reply, isFallback: false };
     } catch {
       // Realistic high-quality pedagogical fallback in Hebrew
