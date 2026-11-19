@@ -68,7 +68,10 @@ class TestTeam1AuthAPI:
             timeout=5
         )
         assert auth_resp.status_code == 200
-        assert "email" in auth_resp.json()
+        auth_data = auth_resp.json()
+        assert auth_data.get("authenticated") is True
+        assert "user" in auth_data
+        assert auth_data["user"]["email"] == valid_credentials["email"]
 
     def test_login_invalid_credentials(self, invalid_credentials):
         """Test POST /login with wrong password returns 401."""
