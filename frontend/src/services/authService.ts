@@ -85,17 +85,46 @@ export class AuthService {
     hasMinLength: boolean;
     hasLetter: boolean;
     hasNumber: boolean;
+    hasSpecialChar: boolean;
+    hasMixedCase: boolean;
+    strengthLevel: 'weak' | 'medium' | 'strong';
+    strengthLabel: string;
     strengthPercent: number;
     errorMessage?: string;
   } {
     const hasMinLength = password.length >= AUTH_LIMITS.PASSWORD_MIN_LENGTH;
     const hasLetter = /[a-zA-Z\u0590-\u05FF]/.test(password);
     const hasNumber = /[0-9]/.test(password);
+    const hasSpecialChar = /[!@#$%^&*()_+\-=[\]{};':"\\|,.<>/?~`]/.test(password);
+    const hasMixedCase = /[a-z]/.test(password) && /[A-Z]/.test(password);
 
-    let score = 0;
-    if (hasMinLength) score += 40;
-    if (hasLetter) score += 30;
-    if (hasNumber) score += 30;
+    const isValid = hasMinLength && hasLetter && hasNumber;
+
+    let strengthLevel: 'weak' | 'medium' | 'strong' = 'weak';
+    let strengthLabel = 'חלשה';
+    let strengthPercent = 0;
+
+    if (!isValid) {
+      strengthLevel = 'weak';
+      strengthLabel = 'חלשה';
+      if (password.length > 0) {
+        strengthPercent = Math.min(
+          35,
+          (hasMinLength ? 15 : 5) + (hasLetter ? 10 : 0) + (hasNumber ? 10 : 0)
+        );
+      }
+    } else if (
+      (password.length >= 10 && (hasSpecialChar || hasMixedCase)) ||
+      password.length >= 12
+    ) {
+      strengthLevel = 'strong';
+      strengthLabel = 'חזקה';
+      strengthPercent = 100;
+    } else {
+      strengthLevel = 'medium';
+      strengthLabel = 'בינונית';
+      strengthPercent = 68;
+    }
 
     let errorMessage = '';
     if (!hasMinLength) {
@@ -104,13 +133,16 @@ export class AuthService {
       errorMessage = 'הסיסמה חייבת לכלול לפחות אות אחת ומספר אחד';
     }
 
-    const isValid = hasMinLength && hasLetter && hasNumber;
     return {
       isValid,
       hasMinLength,
       hasLetter,
       hasNumber,
-      strengthPercent: score,
+      hasSpecialChar,
+      hasMixedCase,
+      strengthLevel,
+      strengthLabel,
+      strengthPercent,
       errorMessage: isValid ? undefined : errorMessage,
     };
   }

@@ -26,6 +26,8 @@ import {
   RotateCw,
   ExternalLink,
   Check,
+  Eye,
+  EyeOff,
 } from 'lucide-react';
 import { ForgotPasswordModal } from '../components/auth/ForgotPasswordModal';
 
@@ -70,6 +72,8 @@ export const WelcomePage: React.FC = () => {
   const [regDepartment, setRegDepartment] = useState('מדעי המחשב');
   const [regPassword, setRegPassword] = useState('');
   const [regConfirmPassword, setRegConfirmPassword] = useState('');
+  const [showRegPassword, setShowRegPassword] = useState(false);
+  const [showRegConfirmPassword, setShowRegConfirmPassword] = useState(false);
   const [regError, setRegError] = useState('');
   const [regLoading, setRegLoading] = useState(false);
   const [regSuccessMessage, setRegSuccessMessage] = useState('');
@@ -593,46 +597,119 @@ const targetRoute = ROLE_LANDING_ROUTES[userRole] || '/courses';
                     <div className="relative">
                       <Lock className="w-4 h-4 text-slate-400 absolute start-3 top-1/2 -translate-y-1/2" />
                       <input
-                        type="password"
+                        type={showRegPassword ? 'text' : 'password'}
                         required
                         value={regPassword}
                         onChange={(e) => setRegPassword(e.target.value)}
                         placeholder="••••••••"
-                        className="w-full ps-9 pe-3 py-2 text-sm rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50/50 dark:bg-slate-800 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                        className="w-full ps-9 pe-9 py-2 text-sm rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50/50 dark:bg-slate-800 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-indigo-500"
                       />
+                      <button
+                        type="button"
+                        onClick={() => setShowRegPassword((prev) => !prev)}
+                        className="absolute end-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200"
+                        aria-label={showRegPassword ? 'הסתר סיסמה' : 'הצג סיסמה'}
+                      >
+                        {showRegPassword ? (
+                          <EyeOff className="w-4 h-4" />
+                        ) : (
+                          <Eye className="w-4 h-4" />
+                        )}
+                      </button>
                     </div>
 
-                    {/* Live Password Strength Meter */}
+                    {/* מד חוזק סיסמה דינמי - סיפור 56 */}
                     {regPassword.length > 0 && (
-                      <div className="mt-2 space-y-1">
-                        <div className="w-full bg-slate-200 dark:bg-slate-700 h-1.5 rounded-full overflow-hidden">
+                      <div className="mt-2.5 p-3 rounded-xl bg-slate-50 dark:bg-slate-800/70 border border-slate-200/80 dark:border-slate-700/80 space-y-2">
+                        <div className="flex items-center justify-between text-xs">
+                          <span className="font-semibold text-slate-600 dark:text-slate-300">
+                            חוזק סיסמה:
+                          </span>
+                          <span
+                            className={`font-extrabold ${
+                              passCheck.strengthLevel === 'strong'
+                                ? 'text-emerald-600 dark:text-emerald-400'
+                                : passCheck.strengthLevel === 'medium'
+                                ? 'text-amber-600 dark:text-amber-400'
+                                : 'text-rose-600 dark:text-rose-400'
+                            }`}
+                          >
+                            {passCheck.strengthLabel}
+                          </span>
+                        </div>
+
+                        {/* פס חוזק מדורג ב-3 שלבים */}
+                        <div className="grid grid-cols-3 gap-1.5">
                           <div
-                            className={`h-full transition-all duration-300 ${
-                              passCheck.isValid
+                            className={`h-1.5 rounded-full transition-colors duration-300 ${
+                              passCheck.strengthLevel === 'strong'
                                 ? 'bg-emerald-500'
-                                : passCheck.strengthPercent > 40
+                                : passCheck.strengthLevel === 'medium'
                                 ? 'bg-amber-500'
                                 : 'bg-rose-500'
                             }`}
-                            style={{ width: `${passCheck.strengthPercent}%` }}
+                          />
+                          <div
+                            className={`h-1.5 rounded-full transition-colors duration-300 ${
+                              passCheck.strengthLevel === 'strong'
+                                ? 'bg-emerald-500'
+                                : passCheck.strengthLevel === 'medium'
+                                ? 'bg-amber-500'
+                                : 'bg-slate-200 dark:bg-slate-700'
+                            }`}
+                          />
+                          <div
+                            className={`h-1.5 rounded-full transition-colors duration-300 ${
+                              passCheck.strengthLevel === 'strong'
+                                ? 'bg-emerald-500'
+                                : 'bg-slate-200 dark:bg-slate-700'
+                            }`}
                           />
                         </div>
-                        <div className="flex items-center justify-between text-[11px]">
-                          <span
-                            className={
-                              passCheck.isValid
-                                ? 'text-emerald-600 font-bold'
-                                : 'text-slate-500'
-                            }
+
+                        {/* רשימת דרישות סיסמה בזמן אמת */}
+                        <ul className="space-y-1 pt-1 text-[11px]">
+                          <li
+                            className={`flex items-center gap-1.5 ${
+                              passCheck.hasMinLength
+                                ? 'text-emerald-600 dark:text-emerald-400 font-semibold'
+                                : 'text-slate-500 dark:text-slate-400'
+                            }`}
                           >
-                            {passCheck.isValid
-                              ? 'סיסמה חזקה ותקינה ✓'
-                              : 'דרושים: 8+ תווים, אות ומספר'}
-                          </span>
-                          {!passCheck.isValid && (
-                            <span className="text-rose-600">{passCheck.errorMessage}</span>
-                          )}
-                        </div>
+                            <Check className="w-3.5 h-3.5 shrink-0" />
+                            <span>לפחות 8 תווים (חובה)</span>
+                          </li>
+                          <li
+                            className={`flex items-center gap-1.5 ${
+                              passCheck.hasLetter
+                                ? 'text-emerald-600 dark:text-emerald-400 font-semibold'
+                                : 'text-slate-500 dark:text-slate-400'
+                            }`}
+                          >
+                            <Check className="w-3.5 h-3.5 shrink-0" />
+                            <span>אות אחת לפחות (חובה)</span>
+                          </li>
+                          <li
+                            className={`flex items-center gap-1.5 ${
+                              passCheck.hasNumber
+                                ? 'text-emerald-600 dark:text-emerald-400 font-semibold'
+                                : 'text-slate-500 dark:text-slate-400'
+                            }`}
+                          >
+                            <Check className="w-3.5 h-3.5 shrink-0" />
+                            <span>ספרה אחת לפחות (חובה)</span>
+                          </li>
+                          <li
+                            className={`flex items-center gap-1.5 ${
+                              passCheck.strengthLevel === 'strong'
+                                ? 'text-emerald-600 dark:text-emerald-400 font-semibold'
+                                : 'text-slate-400 dark:text-slate-500'
+                            }`}
+                          >
+                            <Check className="w-3.5 h-3.5 shrink-0" />
+                            <span>מומלץ לחוזק מירבי: 10+ תווים ותו מיוחד (!@#$) או אות גדולה</span>
+                          </li>
+                        </ul>
                       </div>
                     )}
                   </div>
@@ -644,13 +721,25 @@ const targetRoute = ROLE_LANDING_ROUTES[userRole] || '/courses';
                     <div className="relative">
                       <Lock className="w-4 h-4 text-slate-400 absolute start-3 top-1/2 -translate-y-1/2" />
                       <input
-                        type="password"
+                        type={showRegConfirmPassword ? 'text' : 'password'}
                         required
                         value={regConfirmPassword}
                         onChange={(e) => setRegConfirmPassword(e.target.value)}
                         placeholder="••••••••"
-                        className="w-full ps-9 pe-3 py-2 text-sm rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50/50 dark:bg-slate-800 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                        className="w-full ps-9 pe-9 py-2 text-sm rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50/50 dark:bg-slate-800 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-indigo-500"
                       />
+                      <button
+                        type="button"
+                        onClick={() => setShowRegConfirmPassword((prev) => !prev)}
+                        className="absolute end-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200"
+                        aria-label={showRegConfirmPassword ? 'הסתר סיסמה' : 'הצג סיסמה'}
+                      >
+                        {showRegConfirmPassword ? (
+                          <EyeOff className="w-4 h-4" />
+                        ) : (
+                          <Eye className="w-4 h-4" />
+                        )}
+                      </button>
                     </div>
                     {regConfirmPassword.length > 0 && !passwordsMatch && (
                       <div className="text-rose-600 text-xs mt-1">הסיסמאות אינן תואמות</div>
@@ -666,9 +755,10 @@ const targetRoute = ROLE_LANDING_ROUTES[userRole] || '/courses';
 
                   <button
                     type="submit"
-                    className="w-full py-3 px-4 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-xl shadow-md shadow-indigo-600/20 transition-all flex items-center justify-center gap-2 text-sm mt-2"
+                    disabled={regLoading || !passCheck.isValid || !passwordsMatch}
+                    className="w-full py-3 px-4 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-xl shadow-md shadow-indigo-600/20 transition-all flex items-center justify-center gap-2 text-sm mt-2 disabled:opacity-50 disabled:cursor-not-allowed"
                   >
-                    <span>הירשם למערכת כסטודנט</span>
+                    <span>{regLoading ? 'רושם את החשבון...' : 'הירשם למערכת כסטודנט'}</span>
                     <ArrowLeft className="w-4 h-4" />
                   </button>
                 </>
