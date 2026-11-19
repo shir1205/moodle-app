@@ -20,7 +20,7 @@ def test_all_services_health():
 # Team 1: Authentication & JWT (Port 8001)
 # ==========================================
 
-@pytest.mark.skip(reason="Waiting for Team 1 PR (/login, /auth/me) to be merged into main")
+#@pytest.mark.skip(reason="Waiting for Team 1 PR (/login, /auth/me) to be merged into main")
 class TestTeam1AuthAPI:
     """Integration tests for Team 1 Authentication and JWT module."""
 
@@ -417,7 +417,7 @@ class TestTeam2CoursesAPI:
 # ==========================================
 # Team 3: AI Assistant (Port 8003)
 # ==========================================
-@pytest.mark.skip(reason="Waiting for Team 3 PR (/api/ai/chat, /api/ai/conversations/{id}) to be merged into main — main currently only has /health, /ask, /api/ai/navigate")
+#@pytest.mark.skip(reason="Waiting for Team 3 PR (/api/ai/chat, /api/ai/conversations/{id}) to be merged into main — main currently only has /health, /ask, /api/ai/navigate")
 class TestTeam3AIAPI:
     """Integration tests for Team 3 (AI Assistant) API contract."""
 
