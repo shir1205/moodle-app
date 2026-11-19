@@ -109,7 +109,6 @@ class TestTeam1AuthAPI:
 # Team 2: Courses, Materials & Assignments (Port 8002)
 # ==========================================
 
-@pytest.mark.skip(reason="Waiting for Team 2 /api/* endpoints to be merged into main (main currently only has /courses and /assignments)")
 class TestTeam2CoursesAPI:
     """Integration tests for Team 2 API contract (Stories 19, 20, 22, 25, 26)."""
 
@@ -413,14 +412,74 @@ class TestTeam2CoursesAPI:
 
 
 # ==========================================
+# Team 3: AI Assistant (Port 8003)
+# ==========================================
+@pytest.mark.skip(reason="Waiting for Team 3 PR (/api/ai/chat, /api/ai/conversations/{id}) to be merged into main — main currently only has /health, /ask, /api/ai/navigate")
+class TestTeam3AIAPI:
+    """Integration tests for Team 3 (AI Assistant) API contract."""
+
+    def test_ai_chat_new_conversation(self):
+        """Test POST /api/ai/chat returns 200 with conversation_id, answer, and examples."""
+        payload = {
+            "message": "מהם הנושאים המרכזיים בקורס?",
+            "course_id": "course-101",
+        }
+        response = requests.post(
+            f"{SERVICES['ai']}/api/ai/chat",
+            json=payload,
+            timeout=15,
+        )
+        assert response.status_code == 200
+        data = response.json()
+        assert "conversation_id" in data and isinstance(data["conversation_id"], str)
+        assert "answer" in data and isinstance(data["answer"], str)
+        assert "examples" in data and isinstance(data["examples"], list)
+
+    def test_ai_chat_followup_and_history(self):
+        """Test follow-up message keeps conversation_id and GET /api/ai/conversations/{id} returns history."""
+        first_resp = requests.post(
+            f"{SERVICES['ai']}/api/ai/chat",
+            json={"message": "תסביר בקצרה מה זה מבנה נתונים", "course_id": "course-101"},
+            timeout=15,
+        )
+        assert first_resp.status_code == 200
+        conv_id = first_resp.json()["conversation_id"]
+
+        followup_resp = requests.post(
+            f"{SERVICES['ai']}/api/ai/chat",
+            json={
+                "message": "אפשר דוגמה נוספת?",
+                "conversation_id": conv_id,
+                "course_id": "course-101",
+            },
+            timeout=15,
+        )
+        assert followup_resp.status_code == 200
+        followup_data = followup_resp.json()
+        assert followup_data["conversation_id"] == conv_id
+        assert "answer" in followup_data and "examples" in followup_data
+
+        history_resp = requests.get(
+            f"{SERVICES['ai']}/api/ai/conversations/{conv_id}",
+            timeout=10,
+        )
+        assert history_resp.status_code == 200
+        assert history_resp.json() is not None
+
+    def test_ai_chat_validation_error(self):
+        """Test POST /api/ai/chat with missing required 'message' returns 400 or 422."""
+        response = requests.post(
+            f"{SERVICES['ai']}/api/ai/chat",
+            json={},
+            timeout=10,
+        )
+        assert response.status_code in [400, 422]
+
+
+# ==========================================
 # Future integration tests placeholders
 # ==========================================
 
 def test_notifications_integration():
     """Test notifications retrieval with valid auth token (Team 1 + Team 4)."""
     pytest.skip("Waiting for JWT integration in Team 4 Router")
-
-
-def test_ai_assistant_query():
-    """Test sending a prompt to the AI assistant and receiving a response."""
-    pytest.skip("Waiting for Team 3 Swagger contract")
