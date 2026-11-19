@@ -1,6 +1,7 @@
 """CampuScope Courses & Assignments (Team 2)"""
 import os
 import uuid
+import time
 from datetime import datetime, timezone
 from typing import Optional
 
@@ -111,38 +112,37 @@ def get_course_units(course_id: str):
 # ========================================================
 # Story 20: Course Materials Upload & Fetch (Tasks 109, 110)
 # ========================================================
-@app.post("/api/courses/{course_id}/materials", status_code=201)
+@app.post("/api/courses/{course_id}/materials")
 async def upload_course_material(
     course_id: str,
     unit_id: str = Form(...),
     title: str = Form(...),
-    description: str = Form(default=""),
+    description: str = Form(""),
+    uploaded_by: str = Form("lecturer-michal"),
     file: UploadFile = File(...),
-    user: dict = Depends(get_current_user),
 ):
-    ensure_db()
-    if user["role"] not in {"LECTURER", "ADMIN"}:
-        raise HTTPException(status_code=403, detail="Only lecturers can upload materials.")
+    allowed_exts = {".pdf", ".docx", ".pptx"}
+    file_ext = os.path.splitext(file.filename or "")[1].lower()
+    if file_ext not in allowed_exts:
+        raise HTTPException(status_code=400, detail="פורמט קובץ לא נתמך (מותר PDF/DOCX/PPTX)")
 
-    ext = file.filename.split(".")[-1].upper() if "." in file.filename else ""
-    if ext not in ALLOWED_MATERIAL_EXTENSIONS:
-        raise HTTPException(
-            status_code=400,
-            detail=f"פורמט קובץ לא מורשה. הפורמטים המותרים הם: {', '.join(ALLOWED_MATERIAL_EXTENSIONS)}",
-        )
+    file_bytes = await file.read()
 
-    content = await file.read()
-    if len(content) > MAX_FILE_SIZE_BYTES:
-        raise HTTPException(status_code=400, detail="גודל הקובץ חורג מהמותר (מקסימום 20MB).")
+    # יצירת שם קובץ בטוח באנגלית עבור Supabase Storage
+    safe_filename = f"{int(time.time())}_{uuid.uuid4().hex[:8]}{file_ext}"
+    storage_path = f"{course_id}/{unit_id}/{safe_filename}"
 
-    storage_path = f"{course_id}/{unit_id}/{int(datetime.now(timezone.utc).timestamp())}_{file.filename}"
+    # העלאה ל-Storage
     supabase.storage.from_("materials").upload(
-        path=storage_path,
-        file=content,
-        file_options={"content-type": file.content_type or "application/octet-stream"},
+        storage_path,
+        file_bytes,
+        {"content-type": file.content_type or "application/octet-stream"},
     )
+
+    # קבלת הקישור הציבורי
     public_url = supabase.storage.from_("materials").get_public_url(storage_path)
 
+    # שמירת הרשומה בטבלה (עם השם המקורי לתצוגה)
     record = {
         "id": f"mat-{uuid.uuid4().hex[:8]}",
         "course_id": course_id,
@@ -150,12 +150,12 @@ async def upload_course_material(
         "title": title,
         "description": description,
         "file_name": file.filename,
-        "file_type": ext,
+        "file_type": file_ext.replace(".", "").upper(),
         "file_url": public_url,
-        "uploaded_by": user["user_id"],
+        "uploaded_by": uploaded_by,
     }
     res = supabase.table("course_materials").insert(record).execute()
-    return res.data[0]
+    return res.data[0] if res.data else record
 
 
 @app.get("/api/courses/{course_id}/materials")
