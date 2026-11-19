@@ -9,7 +9,9 @@ from fastapi.middleware.cors import CORSMiddleware
 from google import genai
 from pydantic import BaseModel
 
+from fallback import safe_generate
 from mock_data import get_mock_conversation, get_mock_materials, save_mock_turn
+from navigation import find_destination, is_navigation_question
 
 load_dotenv()
 load_dotenv(Path(__file__).resolve().parent.parent / ".env")
@@ -35,15 +37,40 @@ class Question(BaseModel):
     question: str
 
 
-@app.post("/ask")
-def ask(q: Question):
-    """שולח שאלה ל-Google AI ומחזיר את התשובה"""
-    client = genai.Client(api_key=os.environ["GOOGLE_AI_API_KEY"])
+def _get_gemini_client() -> genai.Client:
+    api_key = os.environ.get("GOOGLE_AI_API_KEY")
+    if not api_key:
+        raise HTTPException(status_code=500, detail="GOOGLE_AI_API_KEY is missing")
+    return genai.Client(api_key=api_key)
+
+
+def ask_gemini(question: str) -> str:
+    """קריאה ל-Google AI. מיובא כאן כדי שהבדיקות יוכלו לרוץ גם בלי מפתח."""
+    client = _get_gemini_client()
     response = client.models.generate_content(
         model=os.environ.get("GOOGLE_AI_MODEL", "gemini-2.5-flash"),
-        contents=q.question,
+        contents=question,
     )
-    return {"answer": response.text}
+    return (response.text or "").strip()
+
+
+@app.post("/ask")
+def ask(q: Question):
+    """שולח שאלה ל-Google AI ומחזיר את התשובה.
+    סיפור 45: אם ה-AI לא זמין, מוחזרת הודעת גיבוי עם fallback=true."""
+    if not q.question.strip():
+        raise HTTPException(status_code=400, detail="Question must not be empty")
+    return safe_generate(lambda: ask_gemini(q.question))
+
+
+@app.post("/api/ai/navigate")
+def navigate(q: Question):
+    """סיפור 44: שאלת ניווט - מחזיר הסבר וקישור למסך המתאים."""
+    if not q.question.strip():
+        raise HTTPException(status_code=400, detail="Question must not be empty")
+    result = find_destination(q.question)
+    result["is_navigation"] = is_navigation_question(q.question)
+    return result
 
 
 class ChatMessage(BaseModel):
@@ -63,13 +90,6 @@ class ChatResponse(BaseModel):
     answer: str
     reply: str
     examples: list[str] = []
-
-
-def _get_gemini_client() -> genai.Client:
-    api_key = os.environ.get("GOOGLE_AI_API_KEY")
-    if not api_key:
-        raise HTTPException(status_code=500, detail="GOOGLE_AI_API_KEY is missing")
-    return genai.Client(api_key=api_key)
 
 
 @app.post("/api/ai/chat", response_model=ChatResponse)
@@ -130,12 +150,7 @@ def ai_chat(req: ChatRequest):
     )
 
     try:
-        client = _get_gemini_client()
-        response = client.models.generate_content(
-            model=os.environ.get("GOOGLE_AI_MODEL", "gemini-2.5-flash"),
-            contents=prompt,
-        )
-        raw_text = (response.text or "").strip()
+        raw_text = ask_gemini(prompt)
         if not raw_text:
             raise RuntimeError("Empty response from Gemini")
     except HTTPException:
