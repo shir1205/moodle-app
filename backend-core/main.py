@@ -139,7 +139,6 @@ def login(payload: LoginRequest):
         )
     except Exception:
         auth_res = None
-   
     # 3. טיפול בכישלון התחברות: עדכון מונה ונעילה אחרי 5 ניסיונות
     if not auth_res or not auth_res.user:
         if user_record:
