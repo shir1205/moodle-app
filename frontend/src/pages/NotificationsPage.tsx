@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { useToast } from '../context/ToastContext';
@@ -37,7 +37,7 @@ export const NotificationsPage: React.FC = () => {
     currentUser ? NotificationService.getNotifications(currentUser.id) : []
   );
 
-  // Preferences state
+ // Preferences state
   const [prefs, setPrefs] = useState<NotificationPreference>(() =>
     currentUser
       ? NotificationService.getPreferences(currentUser.id)
@@ -55,6 +55,25 @@ export const NotificationsPage: React.FC = () => {
           lecturerMessageEmail: true,
         }
   );
+
+  // Sync notifications from backend-core (Supabase) on mount or user switch
+  useEffect(() => {
+    if (!currentUser) return;
+    let isMounted = true;
+
+    NotificationService.fetchNotifications(currentUser.id).then((fetched) => {
+      if (isMounted) {
+        setNotifications(fetched);
+        refreshUnreadCount();
+      }
+    });
+
+    setPrefs(NotificationService.getPreferences(currentUser.id));
+
+    return () => {
+      isMounted = false;
+    };
+  }, [currentUser?.id]);
 
   const filteredNotifications = notifications.filter((n) => {
     if (filterType === 'unread') return !n.isRead;
