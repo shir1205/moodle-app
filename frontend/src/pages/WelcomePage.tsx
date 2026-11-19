@@ -71,6 +71,7 @@ export const WelcomePage: React.FC = () => {
   const [regPassword, setRegPassword] = useState('');
   const [regConfirmPassword, setRegConfirmPassword] = useState('');
   const [regError, setRegError] = useState('');
+  const [regLoading, setRegLoading] = useState(false);
   const [regSuccessMessage, setRegSuccessMessage] = useState('');
   const [registeredUser, setRegisteredUser] = useState<{
     id: string;
@@ -168,7 +169,7 @@ export const WelcomePage: React.FC = () => {
     }
   };
 
-  const handleRegisterSubmit = (e: React.FormEvent) => {
+ const handleRegisterSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setRegError('');
     setRegSuccessMessage('');
@@ -194,12 +195,14 @@ export const WelcomePage: React.FC = () => {
       return;
     }
 
-    const res = AuthService.register({
-      name: regName,
-      email: regEmail,
+    setRegLoading(true);
+    const res = await AuthService.register({
+      name: regName.trim(),
+      email: regEmail.trim(),
       department: regDepartment,
       password: regPassword,
     });
+    setRegLoading(false);
 
     if (!res.success) {
       setRegError(res.error || 'אירעה שגיאה ברישום');
@@ -211,12 +214,11 @@ export const WelcomePage: React.FC = () => {
         id: res.user.id,
         name: res.user.name,
         email: res.user.email,
-        verificationToken: res.verificationToken,
       });
     }
 
     setRegSuccessMessage(
-      'שלחנו לך מייל לאימות הכתובת לתיבת הדואר המדומה. נא לגשת לתיבת הדואר או להשלים את האימות ישירות מהכרטיסייה למטה.'
+      'ההרשמה הושלמה בהצלחה! שלחנו קישור לאימות כתובת הדוא״ל לתיבת המייל שלך.'
     );
   };
 
@@ -497,80 +499,36 @@ export const WelcomePage: React.FC = () => {
                   </button>
                 </div>
               ) : regSuccessMessage && registeredUser ? (
-                /* Registration Success with Demo Inbox Panel */
-                <div className="space-y-4 animate-in fade-in">
-                  <div className="p-4 rounded-xl bg-indigo-50 dark:bg-indigo-950/60 border border-indigo-200 dark:border-indigo-800 text-indigo-900 dark:text-indigo-200 text-sm space-y-1.5">
-                    <div className="flex items-center gap-2 font-bold text-base">
-                      <CheckCircle2 className="w-5 h-5 text-indigo-600" />
-                      <span>שלחנו לך מייל לאימות הכתובת!</span>
-                    </div>
-                    <p className="text-xs leading-relaxed text-indigo-800 dark:text-indigo-300">
-                      הודעת האימות זמינה כעת בתיבת הדואר המדומה (Demo Inbox). ניתן לבצע את האימות ישירות מהכרטיסייה להלן, או לפתוח את תיבת הדואר המלאה.
-                    </p>
-                  </div>
-
-                  {/* Demo Inbox Panel */}
-                  <div className="p-4 rounded-2xl bg-white dark:bg-slate-800/90 border-2 border-indigo-200 dark:border-indigo-800 shadow-md space-y-3.5">
-                    <div className="flex items-center justify-between pb-2 border-b border-slate-100 dark:border-slate-700">
-                      <div className="flex items-center gap-2 text-xs font-bold text-slate-800 dark:text-slate-100">
-                        <Inbox className="w-4 h-4 text-indigo-600 dark:text-indigo-400" />
-                        <span>תיבת דואר מדומה (Demo Inbox)</span>
-                      </div>
-                      <span className="text-[10px] font-bold bg-indigo-100 text-indigo-700 dark:bg-indigo-900/60 dark:text-indigo-200 px-2 py-0.5 rounded-full">
-                        הודעה חדשה
-                      </span>
-                    </div>
-
-                    <div className="p-3.5 rounded-xl bg-slate-50 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-700 space-y-2.5">
-                      <div className="flex items-center justify-between text-xs">
-                        <span className="font-bold text-slate-900 dark:text-white">
-                          אימות כתובת אימייל ב-CampuScope
-                        </span>
-                        <span className="text-[10px] text-slate-400">עכשיו</span>
-                      </div>
-                      <div className="text-[11px] text-slate-500">
-                        אל: <strong className="text-slate-700 dark:text-slate-300">{registeredUser.email}</strong>
-                      </div>
-                      <div className="text-xs text-slate-600 dark:text-slate-300 leading-relaxed font-sans bg-white dark:bg-slate-800 p-2.5 rounded-lg border border-slate-200 dark:border-slate-700">
-                        שלום {registeredUser.name},<br />
-                        ברוך/ה הבא/ה ל-CampuScope. לחץ/י על הקישור להשלמת אימות החשבון:
-                      </div>
-
-                      {/* Clickable verification button */}
-                      <button
-                        type="button"
-                        onClick={() => handleDirectVerify(registeredUser.id)}
-                        className="w-full py-2.5 px-3 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-2 shadow-sm"
-                      >
-                        <Check className="w-4 h-4" />
-                        <span>אימות כתובת המייל</span>
-                      </button>
-                    </div>
-
-                    {/* Direct button to open dedicated /mock-inbox page */}
-                    <div className="flex items-center justify-between pt-1">
-                      <Link
-                        to="/mock-inbox"
-                        className="text-xs font-bold text-indigo-600 dark:text-indigo-400 hover:underline flex items-center gap-1"
-                      >
-                        <span>פתח את תיבת הדואר המדומה (Demo Inbox)</span>
-                        <ExternalLink className="w-3.5 h-3.5" />
-                      </Link>
-
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setActiveTab('login');
-                          setLoginEmail(registeredUser.email);
-                        }}
-                        className="text-xs text-slate-500 hover:text-slate-700 dark:hover:text-slate-300"
-                      >
-                        מעבר להתחברות
-                      </button>
-                    </div>
-                  </div>
-                </div>
-              ) : (
+             /* Registration Success - Real Email Verification Notice */
+             <div className="p-6 rounded-2xl bg-emerald-50 dark:bg-emerald-950/60 border border-emerald-200 dark:border-emerald-800 text-emerald-900 dark:text-emerald-100 text-center space-y-4 animate-in fade-in">
+               <div className="w-14 h-14 rounded-2xl bg-emerald-100 dark:bg-emerald-900/60 text-emerald-600 dark:text-emerald-400 mx-auto flex items-center justify-center shadow-inner">
+                 <CheckCircle2 className="w-8 h-8" />
+               </div>
+               <div>
+                 <h3 className="text-lg font-extrabold text-slate-900 dark:text-white">
+                   נרשמת בהצלחה ל-CampuScope!
+                 </h3>
+                 <p className="text-xs text-slate-600 dark:text-slate-300 mt-2 leading-relaxed">
+                   שלחנו מייל אימות לכתובת <strong>{registeredUser.email}</strong>.
+                   <br />
+                   נא לפתוח את תיבת הדוא״ל שלך וללחוץ על הקישור להפעלת החשבון לפני ההתחברות.
+                 </p>
+               </div>
+               <button
+                 type="button"
+                 onClick={() => {
+                   setActiveTab('login');
+                   setLoginEmail(registeredUser.email);
+                   setRegSuccessMessage('');
+                   setRegisteredUser(null);
+                 }}
+                 className="w-full py-3 px-4 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold rounded-xl transition-all shadow-md shadow-indigo-600/20 flex items-center justify-center gap-2"
+               >
+                 <span>מעבר למסך התחברות</span>
+                 <ArrowLeft className="w-4 h-4" />
+               </button>
+             </div>
+           ) : (
                 <>
                   <div>
                     <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">

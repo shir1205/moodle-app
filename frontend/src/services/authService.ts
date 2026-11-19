@@ -114,60 +114,55 @@ export class AuthService {
     };
   }
 
-  static register(params: {
+ static async register(params: {
     name: string;
     email: string;
     department: string;
     password: string;
-  }): { success: boolean; user?: User; verificationToken?: string; error?: string } {
-    this.init();
-    const users = this.getUsers();
+  }): Promise<{
+    success: boolean;
+    user?: { id: string; name: string; email: string };
+    error?: string;
+  }> {
+    const CORE_API_URL =
+      (import.meta as any).env?.VITE_CORE_API_URL || 'http://localhost:8001';
 
-    if (users.some((u) => u.email.toLowerCase() === params.email.toLowerCase())) {
-      return { success: false, error: 'כתובת אימייל זו כבר קיימת במערכת' };
+    try {
+      const response = await fetch(`${CORE_API_URL}/register`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          full_name: params.name,
+          email: params.email,
+          password: params.password,
+        }),
+      });
+
+      const data = await response.json().catch(() => ({}));
+
+      if (!response.ok) {
+        return {
+          success: false,
+          error: data.detail || 'אירעה שגיאה בתהליך ההרשמה',
+        };
+      }
+
+      return {
+        success: true,
+        user: {
+          id: data.user?.id || '',
+          name: data.user?.full_name || params.name,
+          email: data.user?.email || params.email,
+        },
+      };
+    } catch {
+      return {
+        success: false,
+        error: 'לא ניתן להתחבר לשרת. ודאי ש-backend-core פועל על פורט 8001.',
+      };
     }
-
-    const passCheck = this.validatePassword(params.password);
-    if (!passCheck.isValid) {
-      return { success: false, error: passCheck.errorMessage };
-    }
-
-    const isAutoVerified = Boolean(AUTH_LIMITS.AUTO_VERIFY_IN_DEMO);
-    const newUser: User = {
-      id: `user-${Date.now()}`,
-      name: params.name,
-      email: params.email,
-      role: ROLES.STUDENT, // Every new user starts as Student
-      department: params.department || 'מדעי המחשב',
-      avatarUrl: `https://api.dicebear.com/7.x/initials/svg?seed=${encodeURIComponent(params.name)}`,
-      isVerified: isAutoVerified,
-      twoFactorEnabled: false,
-      hasSetupTwoFactor: false,
-      registeredAt: new Date().toISOString(),
-      assignedCourseIds: ['course-1', 'course-2'],
-      status: 'active',
-      password: params.password,
-    };
-
-    users.push(newUser);
-    StorageService.set(StorageService.keys.USERS, users);
-
-    // Create verification token & mock email
-    const verificationToken = `verify-${Date.now()}-${Math.floor(Math.random() * 10000)}`;
-    const inbox = StorageService.get<Array<any>>(StorageService.keys.MOCK_INBOX, []);
-    inbox.unshift({
-      id: `verify-email-${Date.now()}`,
-      toUserId: newUser.id,
-      toEmail: newUser.email,
-      subject: 'אימות כתובת אימייל ב-CampuScope',
-      body: `שלום ${newUser.name},\nברוך/ה הבא/ה ל-CampuScope. לחץ/י על הקישור להשלמת אימות החשבון:\n/verify?token=${verificationToken}&userId=${newUser.id}`,
-      verificationToken,
-      userId: newUser.id,
-      sentAt: new Date().toISOString(),
-    });
-    StorageService.set(StorageService.keys.MOCK_INBOX, inbox);
-
-    return { success: true, user: newUser, verificationToken };
   }
 
   static verifyEmail(userIdOrToken: string): boolean {
@@ -643,6 +638,6 @@ export class AuthService {
   }
 
   static logout(): void {
-    StorageService.remove(StorageService.keys.CURRENT_USER);
+    localStorage.setItem(StorageService.keys.CURRENT_USER, 'null');
   }
 }

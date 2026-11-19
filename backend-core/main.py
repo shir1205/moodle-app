@@ -1,6 +1,11 @@
 """CampuScope Core & Users (Team 1)"""
 import os
 
+from dotenv import load_dotenv
+
+load_dotenv()
+load_dotenv("../.env")
+
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
@@ -10,7 +15,12 @@ app = FastAPI(title="CampuScope Core & Users")
 # מאפשר ל-Frontend (פורט 3000) לפנות לשירות
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000"],
+    allow_origins=[
+    "http://localhost:5173",
+    "http://127.0.0.1:5173",
+    "http://localhost:3000",
+    "http://127.0.0.1:3000",
+],
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -39,7 +49,101 @@ def test_write(message: str = "hello from CampuScope"):
     result = get_supabase().table("infra_test").insert({"message": message}).execute()
     return {"saved": result.data}
 
+# ---------------------------------------------------------------------------
+# סיפור 55 - הרשמת משתמש חדש (User Registration)
+# ---------------------------------------------------------------------------
 
+class RegisterRequest(BaseModel):
+    full_name: str
+    email: str
+    password: str
+
+
+@app.post("/register")
+def register(body: RegisterRequest):
+    """
+    רישום סטודנט חדש ב-Supabase Auth ושמירת הפרופיל בטבלת public.users.
+    """
+    full_name = body.full_name.strip()
+    email = body.email.strip().lower()
+    password = body.password
+
+    if not full_name:
+        raise HTTPException(status_code=400, detail="נא להזין שם מלא")
+
+    if "@" not in email or "." not in email.split("@")[-1]:
+        raise HTTPException(status_code=400, detail="נא להזין כתובת דוא״ל תקינה")
+
+    has_letter = any(c.isalpha() for c in password)
+    has_digit = any(c.isdigit() for c in password)
+    if len(password) < 8 or not has_letter or not has_digit:
+        raise HTTPException(
+            status_code=400,
+            detail="הסיסמה חייבת להכיל לפחות 8 תווים, אות אחת ומספר אחד",
+        )
+
+    try:
+        supabase = get_supabase()
+    except KeyError:
+        raise HTTPException(
+            status_code=500,
+            detail="חסרים משתני סביבה SUPABASE_URL או SUPABASE_KEY בקובץ .env",
+        )
+
+    # 1. רישום המשתמש ב-Supabase Auth ושליחת מייל אימות (שימוש ב-VERIFY_REDIRECT_URL מסיפור 57)
+    try:
+        auth_res = supabase.auth.sign_up(
+            {
+                "email": email,
+                "password": password,
+                "options": {
+                    "email_redirect_to": VERIFY_REDIRECT_URL,
+                    "data": {"full_name": full_name},
+                },
+            }
+        )
+    except Exception as error:
+        err_msg = str(error).lower()
+        if "already registered" in err_msg or "already exists" in err_msg:
+            raise HTTPException(status_code=409, detail="כתובת אימייל זו כבר קיימת במערכת")
+        if "rate limit" in err_msg or getattr(error, "status", None) == 429:
+            raise HTTPException(status_code=429, detail="נשלחו יותר מדי בקשות. נסו שוב בעוד דקה.")
+        raise HTTPException(status_code=400, detail="אירעה שגיאה ברישום המשתמש")
+
+    user = getattr(auth_res, "user", None)
+    if user is None:
+        raise HTTPException(status_code=400, detail="לא ניתן להשלים את ההרשמה")
+
+    # ב-Supabase: אם המייל כבר קיים ומאומת, חוזר אובייקט משתמש עם רשימת identities ריקה
+    identities = getattr(user, "identities", None)
+    if identities is not None and len(identities) == 0:
+        raise HTTPException(status_code=409, detail="כתובת אימייל זו כבר קיימת במערכת")
+
+    # 2. שמירת המשתמש בטבלת public.users עם תפקיד ברירת מחדל 'student'
+    try:
+        supabase.table("users").insert(
+            {
+                "id": user.id,
+                "email": email,
+                "full_name": full_name,
+                "role": "student",
+            }
+        ).execute()
+    except Exception as error:
+        err_msg = str(error).lower()
+        if "duplicate" in err_msg or "unique" in err_msg:
+            raise HTTPException(status_code=409, detail="כתובת אימייל זו כבר קיימת במערכת")
+        raise HTTPException(status_code=500, detail="המשתמש נוצר אך שמירת הפרופיל נכשלה")
+
+    return {
+        "success": True,
+        "user": {
+            "id": user.id,
+            "email": email,
+            "full_name": full_name,
+            "role": "student",
+        },
+    }
 # ---------------------------------------------------------------------------
 # סיפור 57 - אימות כתובת דוא"ל (Email Verification)
 #
