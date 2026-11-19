@@ -288,3 +288,43 @@ def resend_verification(body: ResendVerificationRequest):
         # כל שגיאה אחרת (למשל מייל לא רשום) - לא חושפים פרטים
 
     return {"sent": True, "message": "אם הכתובת רשומה וטרם אומתה, נשלח אליה מייל אימות חדש."}
+
+
+
+
+# ---------------------------------------------------------------------------
+# סיפור 61 - צפייה בפרטים האישיים (Profile View)
+#
+#   GET /profile  - מחזיר את פרטי המשתמש המחובר בלבד.
+#   המשתמש מזוהה אך ורק לפי ה-JWT (get_current_user, סיפור 67),
+#   כך שאי אפשר לבקש פרופיל של משתמש אחר.
+#   מוחזרים רק שדות "בטוחים" - בלי מונה ניסיונות, נעילה או סיסמה.
+# ---------------------------------------------------------------------------
+
+PROFILE_FIELDS = ("full_name", "email", "role", "department", "avatar_url", "created_at")
+
+
+@app.get("/profile")
+def read_profile(current_user: dict = Depends(get_current_user)):
+    supabase = get_supabase()
+    if not supabase:
+        raise HTTPException(status_code=500, detail="חיבור ל-Supabase אינו מוגדר בשרת")
+
+    email = (current_user.get("email") or "").strip().lower()
+    if not email:
+        raise HTTPException(status_code=401, detail="טוקן אימות לא תקין")
+
+    try:
+        result = supabase.table("users").select("*").eq("email", email).limit(1).execute()
+    except Exception:
+        raise HTTPException(status_code=500, detail="לא ניתן לשלוף את פרטי הפרופיל כרגע")
+
+    record = result.data[0] if result.data else None
+    if not record:
+        raise HTTPException(status_code=404, detail="פרטי המשתמש לא נמצאו")
+
+    profile = {field: record.get(field) for field in PROFILE_FIELDS}
+    profile["id"] = current_user.get("id")
+    profile["email"] = profile["email"] or email
+    profile["role"] = profile["role"] or current_user.get("role", "student")
+    return {"profile": profile}
