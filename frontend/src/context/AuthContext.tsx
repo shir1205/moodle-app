@@ -57,11 +57,26 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   }, [currentUser]);
 
-  useEffect(() => {
+useEffect(() => {
     refreshUnreadCount();
-    const interval = setInterval(refreshUnreadCount, 15000);
-    return () => clearInterval(interval);
-  }, [refreshUnreadCount]);
+    if (!currentUser) return;
+
+    let isMounted = true;
+    const syncFromBackend = () => {
+      NotificationService.fetchNotifications(currentUser.id).then((fetched) => {
+        if (isMounted) {
+          setUnreadCount(fetched.filter((n) => !n.isRead).length);
+        }
+      });
+    };
+
+    syncFromBackend();
+    const interval = setInterval(syncFromBackend, 15000);
+    return () => {
+      isMounted = false;
+      clearInterval(interval);
+    };
+  }, [currentUser, refreshUnreadCount]);
 
   const login = (email: string, pass: string) => {
     const result = AuthService.login(email, pass);
