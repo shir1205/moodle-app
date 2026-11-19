@@ -480,9 +480,91 @@ class TestTeam3AIAPI:
 
 
 # ==========================================
-# Future integration tests placeholders
+# Team 4: Notification Center & JWT Ownership (Port 8001)
 # ==========================================
 
 def test_notifications_integration():
-    """Test notifications retrieval with valid auth token (Team 1 + Team 4)."""
-    pytest.skip("Waiting for JWT integration in Team 4 Router")
+    """Test notifications CRUD, JWT enforcement, and ownership isolation (Team 1 + Team 4)."""
+    # 1. Unauthenticated access must be rejected
+    unauth_resp = requests.get(f"{SERVICES['core']}/notifications/", timeout=10)
+    assert unauth_resp.status_code == 401
+
+    # 2. Authenticate via Team 1 /login endpoint
+    login_resp = requests.post(
+        f"{SERVICES['core']}/login",
+        json={"email": "user@example.com", "password": "Password123!"},
+        timeout=10,
+    )
+    assert login_resp.status_code == 200
+    login_data = login_resp.json()
+    token = login_data["access_token"]
+    user_id = login_data["user"]["id"]
+    auth_headers = {"Authorization": f"Bearer {token}"}
+
+    # 3. Create notification for the authenticated user
+    create_resp = requests.post(
+        f"{SERVICES['core']}/notifications/",
+        json={
+            "title": "Story 77 Integration Test",
+            "message": "End-to-end JWT notification check",
+            "link": "/notifications",
+        },
+        headers=auth_headers,
+        timeout=10,
+    )
+    assert create_resp.status_code == 201
+    created = create_resp.json()
+    notif_id = created["id"]
+    assert created["user_id"] == user_id
+    assert created["is_read"] is False
+
+    # 4. Retrieve notifications and verify isolation to current user
+    list_resp = requests.get(
+        f"{SERVICES['core']}/notifications/",
+        headers=auth_headers,
+        timeout=10,
+    )
+    assert list_resp.status_code == 200
+    items = list_resp.json()
+    assert isinstance(items, list)
+    assert any(item["id"] == notif_id for item in items)
+    assert all(item["user_id"] == user_id for item in items)
+
+    # 5. Mark own notification as read
+    read_resp = requests.patch(
+        f"{SERVICES['core']}/notifications/{notif_id}/read",
+        headers=auth_headers,
+        timeout=10,
+    )
+    assert read_resp.status_code == 200
+    assert read_resp.json()["is_read"] is True
+
+    # 6. Ownership check: cannot mark another user's notification as read
+    other_resp = requests.post(
+        f"{SERVICES['core']}/notifications/",
+        json={
+            "user_id": "other-user-integration-check",
+            "title": "Other User Notification",
+            "message": "Should not be modifiable by another user",
+        },
+        headers=auth_headers,
+        timeout=10,
+    )
+    assert other_resp.status_code == 201
+    other_id = other_resp.json()["id"]
+
+    hijack_resp = requests.patch(
+        f"{SERVICES['core']}/notifications/{other_id}/read",
+        headers=auth_headers,
+        timeout=10,
+    )
+    assert hijack_resp.status_code == 404
+
+    # 7. Mark all remaining notifications for current user as read
+    read_all_resp = requests.patch(
+        f"{SERVICES['core']}/notifications/read-all",
+        headers=auth_headers,
+        timeout=10,
+    )
+    assert read_all_resp.status_code == 200
+    assert "updated_count" in read_all_resp.json()
