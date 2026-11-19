@@ -96,3 +96,11 @@ def test_ask_returns_fallback_when_ai_down():
 def test_ask_empty_question_returns_400():
     response = client.post("/ask", json={"question": ""})
     assert response.status_code == 400
+
+
+def test_ask_returns_fallback_when_api_key_missing():
+    """משימה 102: בלי מפתח ה-AI, המערכת לא קורסת ומחזירה תשובת גיבוי."""
+    with patch.dict("os.environ", {}, clear=True):
+        response = client.post("/ask", json={"question": "מה זו מחסנית?"})
+    assert response.status_code == 200
+    assert response.json()["fallback"] is True
