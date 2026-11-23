@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { useToast } from '../context/ToastContext';
@@ -36,6 +36,7 @@ export const NotificationsPage: React.FC = () => {
   const [notifications, setNotifications] = useState<Notification[]>(() =>
     currentUser ? NotificationService.getNotifications(currentUser.id) : []
   );
+  const [unreadNotifications, setUnreadNotifications] = useState<Notification[] | null>(null);
 
   // Preferences state
   const [prefs, setPrefs] = useState<NotificationPreference>(() =>
@@ -56,15 +57,52 @@ export const NotificationsPage: React.FC = () => {
         }
   );
 
-  const filteredNotifications = notifications.filter((n) => {
-    if (filterType === 'unread') return !n.isRead;
-    return true;
-  });
+  // Sync notifications from backend-core (Supabase) on mount or user switch
+  useEffect(() => {
+    if (!currentUser) return;
+    let isMounted = true;
+    setUnreadNotifications(null);
+
+    NotificationService.fetchNotifications(currentUser.id).then((fetched) => {
+      if (isMounted) {
+        setNotifications(fetched);
+        refreshUnreadCount();
+      }
+    });
+
+    setPrefs(NotificationService.getPreferences(currentUser.id));
+
+    return () => {
+      isMounted = false;
+    };
+  }, [currentUser?.id]);
+
+  // Fetch server-filtered unread notifications when switching to the "unread" filter
+  useEffect(() => {
+    if (!currentUser || filterType !== 'unread') return;
+    let isMounted = true;
+
+    NotificationService.fetchNotifications(currentUser.id, false).then((fetched) => {
+      if (isMounted) {
+        setUnreadNotifications(fetched);
+      }
+    });
+
+    return () => {
+      isMounted = false;
+    };
+  }, [currentUser?.id, filterType]);
+
+  const filteredNotifications =
+    filterType === 'unread'
+      ? (unreadNotifications ?? notifications.filter((n) => !n.isRead))
+      : notifications;
 
   const handleMarkAllAsRead = () => {
     if (!currentUser) return;
     NotificationService.markAllAsRead(currentUser.id);
     setNotifications(NotificationService.getNotifications(currentUser.id));
+    setUnreadNotifications([]);
     refreshUnreadCount();
     showToast('כל ההתראות סומנו כנקראו', 'success');
   };
@@ -73,6 +111,7 @@ export const NotificationsPage: React.FC = () => {
     NotificationService.markAsRead(n.id);
     refreshUnreadCount();
     setNotifications(currentUser ? NotificationService.getNotifications(currentUser.id) : []);
+    setUnreadNotifications((prev) => (prev ? prev.filter((item) => item.id !== n.id) : prev));
 
     if (n.link) {
       navigate(n.link);

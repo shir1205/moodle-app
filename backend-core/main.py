@@ -1,4 +1,4 @@
-"""CampuScope Core & Users (Team 1) - Stories 58 & 67 (Login + JWT)"""
+"""CampuScope Core & Users (Team 1) - Stories 55, 57, 58, 61 & 67"""
 import os
 from pathlib import Path
 try:
@@ -18,14 +18,21 @@ from typing import Optional
 import jwt
 from fastapi import Depends, FastAPI, Header, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from notifications_router import router as notifications_router
 from pydantic import BaseModel
 
 app = FastAPI(title="CampuScope Core & Users")
+app.include_router(notifications_router)
 
 # מאפשר ל-Frontend (פורט 3000) לפנות לשירות
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000"],
+    allow_origins=[
+        "http://localhost:5173",
+        "http://127.0.0.1:5173",
+        "http://localhost:3000",
+        "http://127.0.0.1:3000",
+    ],
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -102,6 +109,106 @@ def test_write(message: str = "hello from CampuScope"):
     return {"saved": result.data}
 
 
+# ---------------------------------------------------------------------------
+# סיפור 55 - הרשמת משתמש חדש (User Registration)
+# ---------------------------------------------------------------------------
+
+class RegisterRequest(BaseModel):
+    full_name: str
+    email: str
+    password: str
+
+
+@app.post("/register")
+def register(body: RegisterRequest):
+    """
+    רישום סטודנט חדש ב-Supabase Auth ושמירת הפרופיל בטבלת public.users.
+    """
+    full_name = body.full_name.strip()
+    email = body.email.strip().lower()
+    password = body.password
+
+    if not full_name:
+        raise HTTPException(status_code=400, detail="נא להזין שם מלא")
+
+    if "@" not in email or "." not in email.split("@")[-1]:
+        raise HTTPException(status_code=400, detail="נא להזין כתובת דוא״ל תקינה")
+
+    has_letter = any(c.isalpha() for c in password)
+    has_digit = any(c.isdigit() for c in password)
+    if len(password) < 8 or not has_letter or not has_digit:
+        raise HTTPException(
+            status_code=400,
+            detail="הסיסמה חייבת להכיל לפחות 8 תווים, אות אחת ומספר אחד",
+        )
+
+    supabase = get_supabase()
+    if not supabase:
+        raise HTTPException(
+            status_code=500,
+            detail="חסרים משתני סביבה SUPABASE_URL או SUPABASE_KEY בקובץ .env",
+        )
+
+    # 1. רישום המשתמש ב-Supabase Auth ושליחת מייל אימות (שימוש ב-VERIFY_REDIRECT_URL מסיפור 57)
+    try:
+        auth_res = supabase.auth.sign_up(
+            {
+                "email": email,
+                "password": password,
+                "options": {
+                    "email_redirect_to": VERIFY_REDIRECT_URL,
+                    "data": {"full_name": full_name},
+                },
+            }
+        )
+    except Exception as error:
+        err_msg = str(error).lower()
+        if "already registered" in err_msg or "already exists" in err_msg:
+            raise HTTPException(status_code=409, detail="כתובת אימייל זו כבר קיימת במערכת")
+        if "rate limit" in err_msg or getattr(error, "status", None) == 429:
+            raise HTTPException(status_code=429, detail="נשלחו יותר מדי בקשות. נסו שוב בעוד דקה.")
+        raise HTTPException(status_code=400, detail="אירעה שגיאה ברישום המשתמש")
+
+    user = getattr(auth_res, "user", None)
+    if user is None:
+        raise HTTPException(status_code=400, detail="לא ניתן להשלים את ההרשמה")
+
+    # ב-Supabase: אם המייל כבר קיים ומאומת, חוזר אובייקט משתמש עם רשימת identities ריקה
+    identities = getattr(user, "identities", None)
+    if identities is not None and len(identities) == 0:
+        raise HTTPException(status_code=409, detail="כתובת אימייל זו כבר קיימת במערכת")
+
+    # 2. שמירת המשתמש בטבלת public.users עם תפקיד ברירת מחדל 'student'
+    try:
+        supabase.table("users").insert(
+            {
+                "id": user.id,
+                "email": email,
+                "full_name": full_name,
+                "role": "student",
+            }
+        ).execute()
+    except Exception as error:
+        err_msg = str(error).lower()
+        if "duplicate" in err_msg or "unique" in err_msg:
+            raise HTTPException(status_code=409, detail="כתובת אימייל זו כבר קיימת במערכת")
+        raise HTTPException(status_code=500, detail="המשתמש נוצר אך שמירת הפרופיל נכשלה")
+
+    return {
+        "success": True,
+        "user": {
+            "id": user.id,
+            "email": email,
+            "full_name": full_name,
+            "role": "student",
+        },
+    }
+
+
+# ---------------------------------------------------------------------------
+# סיפורים 58 & 67 - התחברות משתמש ו-JWT
+# ---------------------------------------------------------------------------
+
 @app.post("/login")
 def login(payload: LoginRequest):
     supabase = get_supabase()
@@ -137,7 +244,7 @@ def login(payload: LoginRequest):
         )
     except Exception:
         auth_res = None
-   
+
     # 3. טיפול בכישלון התחברות: עדכון מונה ונעילה אחרי 5 ניסיונות
     if not auth_res or not auth_res.user:
         if user_record:
@@ -192,28 +299,17 @@ def login(payload: LoginRequest):
         },
     }
 
+
 @app.get("/auth/me")
 def read_current_user(current_user: dict = Depends(get_current_user)):
     """נקודת קצה לבדיקת תקינות ה-JWT Token"""
     return {"authenticated": True, "user": current_user}
+
+
 # ---------------------------------------------------------------------------
 # סיפור 57 - אימות כתובת דוא"ל (Email Verification)
-#
-# הזרימה (Supabase בגרסה החינמית, תבנית המייל לא ניתנת לעריכה):
-#   1. sign_up (סיפור 55) עם email_redirect_to = VERIFY_REDIRECT_URL
-#   2. Supabase שולח מייל. הקישור עובר דרך Supabase, שמאמת את המייל בעצמו
-#   3. Supabase מחזיר את המשתמש ל-/verify עם access_token בכתובת
-#   4. מסך /verify שולח את ה-access_token ל-POST /verify-email
-#      והשרת בודק מול Supabase שהמייל באמת אומת (email_confirmed_at)
-#
-#   POST /verify-email          - בדיקה בצד השרת שהמשתמש מאומת
-#   POST /resend-verification   - שליחה חוזרת של מייל האימות
-#   is_email_not_confirmed()    - עזר לנתיב /login (סיפור 58)
 # ---------------------------------------------------------------------------
 
-# לאן Supabase מחזיר את המשתמש אחרי לחיצה על הקישור במייל.
-# להשתמש באותו ערך גם ב-sign_up (סיפור 55):
-#   options={"email_redirect_to": VERIFY_REDIRECT_URL}
 VERIFY_REDIRECT_URL = os.environ.get("VERIFY_REDIRECT_URL", "http://localhost:3000/verify")
 
 EMAIL_NOT_CONFIRMED_MESSAGE = "החשבון טרם אומת. נא לבדוק את תיבת הדוא״ל וללחוץ על קישור האימות."
@@ -229,21 +325,12 @@ class ResendVerificationRequest(BaseModel):
 
 
 def is_email_not_confirmed(error: Exception) -> bool:
-    """
-    האם השגיאה מ-Supabase נובעת ממשתמש שעוד לא אימת את המייל.
-    לשימוש ב-/login: במקרה כזה מחזירים 403 עם EMAIL_NOT_CONFIRMED_MESSAGE.
-    """
     code = getattr(error, "code", "") or ""
     return code == "email_not_confirmed" or "email not confirmed" in str(error).lower()
 
 
 @app.post("/verify-email")
 def verify_email(body: VerifyEmailRequest):
-    """
-    Supabase כבר אימת את המייל והחזיר את המשתמש ל-/verify עם access_token.
-    כאן בודקים בצד השרת שהטוקן אמיתי ושהמייל אכן מסומן כמאומת,
-    כדי לא לסמוך רק על מה שכתוב בכתובת בדפדפן.
-    """
     if not body.access_token.strip():
         raise HTTPException(status_code=400, detail=INVALID_LINK_MESSAGE)
 
@@ -264,10 +351,6 @@ def verify_email(body: VerifyEmailRequest):
 
 @app.post("/resend-verification")
 def resend_verification(body: ResendVerificationRequest):
-    """
-    שליחה חוזרת של מייל האימות.
-    התשובה זהה גם כשהמייל לא רשום, כדי שאי אפשר יהיה לגלות אילו כתובות קיימות.
-    """
     email = body.email.strip()
     if "@" not in email:
         raise HTTPException(status_code=400, detail="כתובת אימייל לא תקינה")
@@ -283,20 +366,12 @@ def resend_verification(body: ResendVerificationRequest):
     except Exception as error:
         if getattr(error, "status", None) == 429 or "rate limit" in str(error).lower():
             raise HTTPException(status_code=429, detail="נשלחו יותר מדי בקשות. נסו שוב בעוד דקה.")
-        # כל שגיאה אחרת (למשל מייל לא רשום) - לא חושפים פרטים
 
     return {"sent": True, "message": "אם הכתובת רשומה וטרם אומתה, נשלח אליה מייל אימות חדש."}
 
 
-
-
 # ---------------------------------------------------------------------------
 # סיפור 61 - צפייה בפרטים האישיים (Profile View)
-#
-#   GET /profile  - מחזיר את פרטי המשתמש המחובר בלבד.
-#   המשתמש מזוהה אך ורק לפי ה-JWT (get_current_user, סיפור 67),
-#   כך שאי אפשר לבקש פרופיל של משתמש אחר.
-#   מוחזרים רק שדות "בטוחים" - בלי מונה ניסיונות, נעילה או סיסמה.
 # ---------------------------------------------------------------------------
 
 PROFILE_FIELDS = ("full_name", "email", "role", "department", "avatar_url", "created_at")

@@ -284,12 +284,13 @@ async def submit_or_replace_solution(
     if now_utc > due_utc:
         raise HTTPException(status_code=403, detail="מועד ההגשה חלף. אזור ההעלאה ננעל.")
 
-    ext = file.filename.split(".")[-1].upper() if "." in file.filename else ""
+    safe_name = file.filename or "submission.bin"
+    ext = safe_name.split(".")[-1].upper() if "." in safe_name else ""
     if ext not in ALLOWED_SUBMISSION_EXTENSIONS:
         raise HTTPException(status_code=400, detail=f"סוג קובץ לא מורשה להגשה: {ext}")
 
     content = await file.read()
-    storage_path = f"{assignment_id}/{user['user_id']}/{int(now_utc.timestamp())}_{file.filename}"
+    storage_path = f"{assignment_id}/{user['user_id']}/{int(now_utc.timestamp())}_{safe_name}"
     supabase.storage.from_("submissions").upload(
         path=storage_path,
         file=content,
@@ -301,7 +302,7 @@ async def submit_or_replace_solution(
         "id": f"sub-{uuid.uuid4().hex[:8]}",
         "assignment_id": assignment_id,
         "student_id": user["user_id"],
-        "file_name": file.filename,
+        "file_name": safe_name,
         "file_url": public_url,
         "status": "submitted",
         "submitted_at": now_utc.isoformat(),
