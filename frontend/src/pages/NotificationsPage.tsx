@@ -56,8 +56,9 @@ export const NotificationsPage: React.FC = () => {
           lecturerMessageEmail: true,
         }
   );
+  const [isSavingPrefs, setIsSavingPrefs] = useState(false);
 
-  // Sync notifications from backend-core (Supabase) on mount or user switch
+  // Sync notifications and preferences from backend-core (Supabase) on mount or user switch
   useEffect(() => {
     if (!currentUser) return;
     let isMounted = true;
@@ -70,7 +71,11 @@ export const NotificationsPage: React.FC = () => {
       }
     });
 
-    setPrefs(NotificationService.getPreferences(currentUser.id));
+    NotificationService.fetchPreferences(currentUser.id).then((fetchedPrefs) => {
+      if (isMounted) {
+        setPrefs(fetchedPrefs);
+      }
+    });
 
     return () => {
       isMounted = false;
@@ -118,10 +123,23 @@ export const NotificationsPage: React.FC = () => {
     }
   };
 
-  const handleSavePreferences = (e: React.FormEvent) => {
+  const handleSavePreferences = async (e: React.FormEvent) => {
     e.preventDefault();
-    NotificationService.updatePreferences(prefs);
-    showToast('העדפות ההתראה נשמרו בהצלחה!', 'success');
+    if (!currentUser) return;
+    setIsSavingPrefs(true);
+    try {
+      const saved = await NotificationService.savePreferences({
+        ...prefs,
+        userId: currentUser.id,
+      });
+      setPrefs(saved);
+      showToast('העדפות ההתראה נשמרו בהצלחה!', 'success');
+    } catch (err) {
+      console.error('Failed to save preferences:', err);
+      showToast('שגיאה בשמירת העדפות ההתראה', 'error');
+    } finally {
+      setIsSavingPrefs(false);
+    }
   };
 
   const getNotificationIcon = (type: NotificationType) => {
@@ -451,10 +469,11 @@ export const NotificationsPage: React.FC = () => {
             <div className="pt-4 border-t border-slate-100 dark:border-slate-800 flex justify-end">
               <button
                 type="submit"
-                className="px-6 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold transition-colors shadow-sm flex items-center gap-1.5"
+                disabled={isSavingPrefs}
+                className="px-6 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 disabled:opacity-60 text-white text-xs font-bold transition-colors shadow-sm flex items-center gap-1.5"
               >
                 <CheckCircle2 className="w-4 h-4" />
-                <span>שמירת העדפות</span>
+                <span>{isSavingPrefs ? 'שומר...' : 'שמירת העדפות'}</span>
               </button>
             </div>
           </div>

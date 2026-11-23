@@ -21,6 +21,35 @@ class NotificationCreate(BaseModel):
     link: Optional[str] = None
 
 
+class NotificationPreferencesUpdate(BaseModel):
+    grade_in_app: bool = True
+    grade_email: bool = True
+    ai_feedback_in_app: bool = True
+    ai_feedback_email: bool = False
+    new_assignment_in_app: bool = True
+    new_assignment_email: bool = True
+    reminder_in_app: bool = True
+    reminder_email: bool = True
+    lecturer_message_in_app: bool = True
+    lecturer_message_email: bool = True
+
+
+def _default_preferences(user_id: str) -> dict:
+    return {
+        "user_id": user_id,
+        "grade_in_app": True,
+        "grade_email": True,
+        "ai_feedback_in_app": True,
+        "ai_feedback_email": False,
+        "new_assignment_in_app": True,
+        "new_assignment_email": True,
+        "reminder_in_app": True,
+        "reminder_email": True,
+        "lecturer_message_in_app": True,
+        "lecturer_message_email": True,
+    }
+
+
 def get_supabase() -> Client:
     """Connect to Supabase using credentials from the .env file."""
     url: str = os.environ.get("SUPABASE_URL")
@@ -119,6 +148,59 @@ async def mark_all_as_read(current_user: dict = Depends(get_current_user)):
     except Exception as e:
         print(f"Database error (PATCH /notifications/read-all): {e}")
         raise HTTPException(status_code=500, detail="Failed to mark all notifications as read")
+
+
+@router.get("/preferences")
+async def get_preferences(current_user: dict = Depends(get_current_user)):
+    try:
+        supabase = get_supabase()
+        response = (
+            supabase.table("notification_preferences")
+            .select("*")
+            .eq("user_id", current_user["id"])
+            .execute()
+        )
+        if not response.data:
+            return _default_preferences(current_user["id"])
+        return response.data[0]
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"Database error (GET /notifications/preferences): {e}")
+        raise HTTPException(status_code=500, detail="Failed to fetch notification preferences")
+
+
+@router.put("/preferences")
+async def update_preferences(
+    payload: NotificationPreferencesUpdate,
+    current_user: dict = Depends(get_current_user),
+):
+    try:
+        supabase = get_supabase()
+        row = {
+            "user_id": current_user["id"],
+            "grade_in_app": payload.grade_in_app,
+            "grade_email": payload.grade_email,
+            "ai_feedback_in_app": payload.ai_feedback_in_app,
+            "ai_feedback_email": payload.ai_feedback_email,
+            "new_assignment_in_app": payload.new_assignment_in_app,
+            "new_assignment_email": payload.new_assignment_email,
+            "reminder_in_app": payload.reminder_in_app,
+            "reminder_email": payload.reminder_email,
+            "lecturer_message_in_app": payload.lecturer_message_in_app,
+            "lecturer_message_email": payload.lecturer_message_email,
+        }
+        response = (
+            supabase.table("notification_preferences")
+            .upsert(row, on_conflict="user_id")
+            .execute()
+        )
+        return response.data[0] if response.data else row
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"Database error (PUT /notifications/preferences): {e}")
+        raise HTTPException(status_code=500, detail="Failed to save notification preferences")
 
 
 @router.patch("/{notification_id}/read")
