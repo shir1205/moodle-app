@@ -50,16 +50,22 @@ export class NotificationService {
 
   /**
    * Fetch notifications for a user from backend-core (Supabase) and sync local cache.
+   * Supports optional server-side is_read filtering.
    * Falls back silently to localStorage if the user has no JWT or backend is unavailable.
    */
-  static async fetchNotifications(userId: string): Promise<Notification[]> {
+  static async fetchNotifications(userId: string, isRead?: boolean): Promise<Notification[]> {
     this.init();
+    const filterLocal = (items: Notification[]) =>
+      isRead === undefined ? items : items.filter((n) => n.isRead === isRead);
+
     if (!getAuthToken()) {
-      return this.getNotifications(userId);
+      return filterLocal(this.getNotifications(userId));
     }
 
     try {
-      const response = await authFetch('/notifications/', {
+      const endpoint =
+        isRead === undefined ? '/notifications/' : `/notifications/?is_read=${isRead}`;
+      const response = await authFetch(endpoint, {
         method: 'GET',
       });
 
@@ -74,21 +80,27 @@ export class NotificationService {
 
       const mapped = (rows as BackendNotification[]).map((row) => this.mapFromBackend(row));
 
-      // Preserve other users' cache and non-numeric local/seed notifications for this user
       const all = StorageService.get<Notification[]>(StorageService.keys.NOTIFICATIONS, []);
-      const otherUsers = all.filter((n) => n.userId !== userId);
       const localOnly = all.filter(
-        (n) => n.userId === userId && !/^\d+$/.test(n.id)
+        (n) =>
+          n.userId === userId &&
+          !/^\d+$/.test(n.id) &&
+          (isRead === undefined || n.isRead === isRead)
       );
       const mergedForUser = [...mapped, ...localOnly].sort(
         (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
       );
 
-      StorageService.set(StorageService.keys.NOTIFICATIONS, [...mergedForUser, ...otherUsers]);
+      // Update full localStorage cache only when fetching unfiltered notifications
+      if (isRead === undefined) {
+        const otherUsers = all.filter((n) => n.userId !== userId);
+        StorageService.set(StorageService.keys.NOTIFICATIONS, [...mergedForUser, ...otherUsers]);
+      }
+
       return mergedForUser;
     } catch (error) {
       console.warn('Backend notifications unavailable, using local cache:', error);
-      return this.getNotifications(userId);
+      return filterLocal(this.getNotifications(userId));
     }
   }
 

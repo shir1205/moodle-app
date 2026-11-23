@@ -56,16 +56,20 @@ def get_current_user(authorization: Optional[str] = Header(None)) -> dict:
 
 
 @router.get("/")
-async def get_notifications(current_user: dict = Depends(get_current_user)):
+async def get_notifications(
+    is_read: Optional[bool] = None,
+    current_user: dict = Depends(get_current_user),
+):
     try:
         supabase = get_supabase()
-        response = (
+        query = (
             supabase.table("notifications")
             .select("*")
             .eq("user_id", current_user["id"])
-            .order("created_at", desc=True)
-            .execute()
         )
+        if is_read is not None:
+            query = query.eq("is_read", is_read)
+        response = query.order("created_at", desc=True).execute()
         return response.data
     except HTTPException:
         raise
