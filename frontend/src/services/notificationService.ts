@@ -24,6 +24,20 @@ interface BackendNotification {
   created_at: string;
 }
 
+interface BackendNotificationPreference {
+  user_id: string;
+  grade_in_app: boolean;
+  grade_email: boolean;
+  ai_feedback_in_app: boolean;
+  ai_feedback_email: boolean;
+  new_assignment_in_app: boolean;
+  new_assignment_email: boolean;
+  reminder_in_app: boolean;
+  reminder_email: boolean;
+  lecturer_message_in_app: boolean;
+  lecturer_message_email: boolean;
+}
+
 export class NotificationService {
   private static init(): void {
     if (!localStorage.getItem(StorageService.keys.NOTIFICATIONS)) {
@@ -45,6 +59,39 @@ export class NotificationService {
       isRead: Boolean(row.is_read),
       createdAt: row.created_at,
       channel: 'in_app',
+    };
+  }
+
+  private static mapPreferencesFromBackend(
+    row: BackendNotificationPreference
+  ): NotificationPreference {
+    return {
+      userId: row.user_id,
+      gradeInApp: Boolean(row.grade_in_app),
+      gradeEmail: Boolean(row.grade_email),
+      aiFeedbackInApp: Boolean(row.ai_feedback_in_app),
+      aiFeedbackEmail: Boolean(row.ai_feedback_email),
+      newAssignmentInApp: Boolean(row.new_assignment_in_app),
+      newAssignmentEmail: Boolean(row.new_assignment_email),
+      reminderInApp: Boolean(row.reminder_in_app),
+      reminderEmail: Boolean(row.reminder_email),
+      lecturerMessageInApp: Boolean(row.lecturer_message_in_app),
+      lecturerMessageEmail: Boolean(row.lecturer_message_email),
+    };
+  }
+
+  private static mapPreferencesToBackend(pref: NotificationPreference) {
+    return {
+      grade_in_app: pref.gradeInApp,
+      grade_email: pref.gradeEmail,
+      ai_feedback_in_app: pref.aiFeedbackInApp,
+      ai_feedback_email: pref.aiFeedbackEmail,
+      new_assignment_in_app: pref.newAssignmentInApp,
+      new_assignment_email: pref.newAssignmentEmail,
+      reminder_in_app: pref.reminderInApp,
+      reminder_email: pref.reminderEmail,
+      lecturer_message_in_app: pref.lecturerMessageInApp,
+      lecturer_message_email: pref.lecturerMessageEmail,
     };
   }
 
@@ -180,6 +227,57 @@ export class NotificationService {
       prefs.push(newPref);
     }
     StorageService.set(StorageService.keys.PREFERENCES, prefs);
+  }
+
+  /**
+   * Fetch notification preferences from backend-core (Supabase) and sync local cache.
+   */
+  static async fetchPreferences(userId: string): Promise<NotificationPreference> {
+    this.init();
+    if (!getAuthToken()) {
+      return this.getPreferences(userId);
+    }
+
+    try {
+      const response = await authFetch('/notifications/preferences', {
+        method: 'GET',
+      });
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}`);
+      }
+      const row = (await response.json()) as BackendNotificationPreference;
+      const mapped = this.mapPreferencesFromBackend(row);
+      this.updatePreferences(mapped);
+      return mapped;
+    } catch (error) {
+      console.warn('Backend preferences unavailable, using local cache:', error);
+      return this.getPreferences(userId);
+    }
+  }
+
+  /**
+   * Save notification preferences to backend-core (Supabase) and sync local cache.
+   */
+  static async savePreferences(newPref: NotificationPreference): Promise<NotificationPreference> {
+    this.init();
+    if (!getAuthToken()) {
+      this.updatePreferences(newPref);
+      return newPref;
+    }
+
+    const response = await authFetch('/notifications/preferences', {
+      method: 'PUT',
+      body: JSON.stringify(this.mapPreferencesToBackend(newPref)),
+    });
+
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}`);
+    }
+
+    const row = (await response.json()) as BackendNotificationPreference;
+    const mapped = this.mapPreferencesFromBackend(row);
+    this.updatePreferences(mapped);
+    return mapped;
   }
 
   static createNotification(params: {
