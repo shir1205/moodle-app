@@ -1,5 +1,6 @@
 import pytest
 import requests
+import uuid
 
 # Base URLs matching docker-compose port mappings
 SERVICES = {
@@ -106,6 +107,70 @@ class TestTeam1AuthAPI:
 
         response = requests.post(url, json=lockout_creds, timeout=5)
         assert response.status_code == 423
+
+    def test_register_new_user_success(self):
+        """Test POST /register with valid data creates user and returns 200."""
+        unique_email = f"reg.test.{uuid.uuid4().hex[:8]}@gmail.com"
+        payload = {
+            "full_name": "Test Student",
+            "email": unique_email,
+            "password": "Password123!"
+        }
+        response = requests.post(
+            f"{SERVICES['core']}/register",
+            json=payload,
+            timeout=10
+        )
+        assert response.status_code == 200, f"Expected 200, got {response.status_code}: {response.text}"
+        data = response.json()
+        assert data.get("success") is True
+        assert "user" in data
+        assert data["user"]["email"] == unique_email
+        assert data["user"]["full_name"] == "Test Student"
+        assert data["user"]["role"] == "student"
+        assert "id" in data["user"]
+
+    def test_register_duplicate_email(self, valid_credentials):
+        """Test POST /register with an already registered email returns 409."""
+        payload = {
+            "full_name": "Duplicate User",
+            "email": valid_credentials["email"],
+            "password": "Password123!"
+        }
+        response = requests.post(
+            f"{SERVICES['core']}/register",
+            json=payload,
+            timeout=10
+        )
+        assert response.status_code == 409
+
+    def test_register_validation_errors(self):
+        """Test POST /register rejects empty name, invalid email, or weak password (400)."""
+        url = f"{SERVICES['core']}/register"
+
+        # 1. Empty full_name
+        resp_empty_name = requests.post(
+            url,
+            json={"full_name": "   ", "email": "valid@example.com", "password": "Password123!"},
+            timeout=5
+        )
+        assert resp_empty_name.status_code == 400
+
+        # 2. Invalid email format
+        resp_bad_email = requests.post(
+            url,
+            json={"full_name": "Test User", "email": "invalid-email", "password": "Password123!"},
+            timeout=5
+        )
+        assert resp_bad_email.status_code == 400
+
+        # 3. Weak password (less than 8 chars / missing letter or digit)
+        resp_weak_pass = requests.post(
+            url,
+            json={"full_name": "Test User", "email": "valid@example.com", "password": "123"},
+            timeout=5
+        )
+        assert resp_weak_pass.status_code == 400
 
 
 # ==========================================
