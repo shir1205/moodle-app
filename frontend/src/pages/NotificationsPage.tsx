@@ -36,8 +36,9 @@ export const NotificationsPage: React.FC = () => {
   const [notifications, setNotifications] = useState<Notification[]>(() =>
     currentUser ? NotificationService.getNotifications(currentUser.id) : []
   );
+  const [unreadNotifications, setUnreadNotifications] = useState<Notification[] | null>(null);
 
- // Preferences state
+  // Preferences state
   const [prefs, setPrefs] = useState<NotificationPreference>(() =>
     currentUser
       ? NotificationService.getPreferences(currentUser.id)
@@ -60,6 +61,7 @@ export const NotificationsPage: React.FC = () => {
   useEffect(() => {
     if (!currentUser) return;
     let isMounted = true;
+    setUnreadNotifications(null);
 
     NotificationService.fetchNotifications(currentUser.id).then((fetched) => {
       if (isMounted) {
@@ -75,15 +77,32 @@ export const NotificationsPage: React.FC = () => {
     };
   }, [currentUser?.id]);
 
-  const filteredNotifications = notifications.filter((n) => {
-    if (filterType === 'unread') return !n.isRead;
-    return true;
-  });
+  // Fetch server-filtered unread notifications when switching to the "unread" filter
+  useEffect(() => {
+    if (!currentUser || filterType !== 'unread') return;
+    let isMounted = true;
+
+    NotificationService.fetchNotifications(currentUser.id, false).then((fetched) => {
+      if (isMounted) {
+        setUnreadNotifications(fetched);
+      }
+    });
+
+    return () => {
+      isMounted = false;
+    };
+  }, [currentUser?.id, filterType]);
+
+  const filteredNotifications =
+    filterType === 'unread'
+      ? (unreadNotifications ?? notifications.filter((n) => !n.isRead))
+      : notifications;
 
   const handleMarkAllAsRead = () => {
     if (!currentUser) return;
     NotificationService.markAllAsRead(currentUser.id);
     setNotifications(NotificationService.getNotifications(currentUser.id));
+    setUnreadNotifications([]);
     refreshUnreadCount();
     showToast('כל ההתראות סומנו כנקראו', 'success');
   };
@@ -92,6 +111,7 @@ export const NotificationsPage: React.FC = () => {
     NotificationService.markAsRead(n.id);
     refreshUnreadCount();
     setNotifications(currentUser ? NotificationService.getNotifications(currentUser.id) : []);
+    setUnreadNotifications((prev) => (prev ? prev.filter((item) => item.id !== n.id) : prev));
 
     if (n.link) {
       navigate(n.link);
