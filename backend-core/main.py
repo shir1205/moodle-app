@@ -19,11 +19,13 @@ import jwt
 from fastapi import Depends, FastAPI, Header, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from notifications_router import router as notifications_router
+from analytics_router import router as analytics_router
 from auth_middleware import JWT_ALGORITHM, JWT_SECRET, get_current_user
 from pydantic import BaseModel
 
 app = FastAPI(title="CampuScope Core & Users")
 app.include_router(notifications_router)
+app.include_router(analytics_router)
 
 # מאפשר ל-Frontend (פורט 3000) לפנות לשירות
 app.add_middleware(

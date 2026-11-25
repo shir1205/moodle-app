@@ -1,3 +1,6 @@
+import os
+import uuid
+
 import pytest
 import requests
 
@@ -568,3 +571,80 @@ def test_notifications_integration():
     )
     assert read_all_resp.status_code == 200
     assert "updated_count" in read_all_resp.json()
+
+
+# ==========================================
+# Team 4: At-Risk Students Analytics (Story #7)
+# ==========================================
+
+def test_at_risk_students_e2e():
+    """Story #7 E2E: Verify 401 without token, 403 for student, and 200 JSON list for lecturer/admin."""
+    # 1. Unauthenticated request must return 401
+    unauth_resp = requests.get(f"{SERVICES['core']}/analytics/at-risk", timeout=10)
+    assert unauth_resp.status_code == 401
+
+    # 2. Student token must be rejected with 403
+    student_email = os.environ.get("TEST_STUDENT_EMAIL", "user@example.com")
+    student_password = os.environ.get("TEST_STUDENT_PASSWORD", "Password123!")
+    student_login = requests.post(
+        f"{SERVICES['core']}/login",
+        json={"email": student_email, "password": student_password},
+        timeout=10,
+    )
+    assert student_login.status_code == 200
+    student_token = student_login.json()["access_token"]
+
+    forbidden_resp = requests.get(
+        f"{SERVICES['core']}/analytics/at-risk",
+        headers={"Authorization": f"Bearer {student_token}"},
+        timeout=10,
+    )
+    assert forbidden_resp.status_code == 403
+    assert forbidden_resp.json().get("detail") == "אין הרשאה לבצע פעולה זו"
+
+    # 3. Lecturer/Admin token must receive 200 with a JSON list
+    lecturer_token = None
+    lecturer_email = os.environ.get("TEST_LECTURER_EMAIL", "lecturer@example.com")
+    lecturer_password = os.environ.get("TEST_LECTURER_PASSWORD", "Password123!")
+    lecturer_login = requests.post(
+        f"{SERVICES['core']}/login",
+        json={"email": lecturer_email, "password": lecturer_password},
+        timeout=10,
+    )
+    if lecturer_login.status_code == 200:
+        lecturer_user = lecturer_login.json().get("user", {})
+        if (lecturer_user.get("role") or "").lower() in {"lecturer", "admin"}:
+            lecturer_token = lecturer_login.json()["access_token"]
+
+    if not lecturer_token:
+        jwt_secret = os.environ.get("JWT_SECRET") or os.environ.get("SUPABASE_KEY")
+        if jwt_secret:
+            import jwt as pyjwt
+
+            lecturer_token = pyjwt.encode(
+                {
+                    "sub": str(uuid.uuid4()),
+                    "email": lecturer_email,
+                    "role": "lecturer",
+                },
+                jwt_secret,
+                algorithm="HS256",
+            )
+
+    if not lecturer_token:
+        pytest.skip("Lecturer credentials or JWT_SECRET required to verify 200 response for Story #7 E2E")
+
+    ok_resp = requests.get(
+        f"{SERVICES['core']}/analytics/at-risk",
+        headers={"Authorization": f"Bearer {lecturer_token}"},
+        timeout=10,
+    )
+    assert ok_resp.status_code == 200
+    data = ok_resp.json()
+    assert isinstance(data, list)
+    for item in data:
+        assert "student_id" in item
+        assert "full_name" in item
+        assert "email" in item
+        assert "missed_assignments_count" in item
+        assert "risk_reasons" in item
