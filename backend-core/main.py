@@ -518,3 +518,77 @@ def change_password(body: ChangePasswordRequest, current_user: dict = Depends(ge
 @app.post("/logout")
 def logout(current_user: dict = Depends(get_current_user)):
     return {"logged_out": True}
+    # ---------------------------------------------------------------------------
+# סיפור 87 (Tasks #184, #185) - ניהול תפקידים והרשאות (RBAC)
+# ---------------------------------------------------------------------------
+
+from rbac import ALLOWED_ROLES, UserRole, require_admin, require_lecturer
+
+
+class UpdateUserRoleRequest(BaseModel):
+    role: UserRole
+
+
+@app.get("/users")
+def list_users_roles(current_user: dict = Depends(require_admin)):
+    """שליפת רשימת משתמשים ותפקידים - מוגבל למנהל מערכת (admin) בלבד"""
+    supabase = get_supabase()
+    if not supabase:
+        raise HTTPException(status_code=500, detail="חיבור ל-Supabase אינו מוגדר בשרת")
+
+    try:
+        result = supabase.table("users").select("id, email, full_name, role").execute()
+    except Exception:
+        raise HTTPException(status_code=500, detail="לא ניתן לשלוף את רשימת המשתמשים כרגע")
+
+    return {"users": result.data or []}
+
+
+@app.patch("/users/{user_id}/role")
+def update_user_role(
+    user_id: str,
+    body: UpdateUserRoleRequest,
+    current_user: dict = Depends(require_admin),
+):
+    """עדכון תפקיד משתמש (student / lecturer / admin) - מוגבל למנהל (admin) בלבד"""
+    new_role = body.role.value
+    if new_role not in ALLOWED_ROLES:
+        raise HTTPException(status_code=400, detail="תפקיד לא חוקי")
+
+    supabase = get_supabase()
+    if not supabase:
+        raise HTTPException(status_code=500, detail="חיבור ל-Supabase אינו מוגדר בשרת")
+
+    try:
+        result = (
+            supabase.table("users")
+            .update({"role": new_role})
+            .eq("id", user_id)
+            .execute()
+        )
+    except Exception:
+        raise HTTPException(status_code=500, detail="לא ניתן לעדכן את תפקיד המשתמש כרגע")
+
+    record = result.data[0] if result.data else None
+    if not record:
+        raise HTTPException(status_code=404, detail="המשתמש לא נמצא")
+
+    return {
+        "updated": True,
+        "user": {
+            "id": record.get("id"),
+            "email": record.get("email"),
+            "full_name": record.get("full_name"),
+            "role": record.get("role"),
+        },
+    }
+
+
+@app.get("/rbac/lecturer-only")
+def lecturer_only_check(current_user: dict = Depends(require_lecturer)):
+    """נקודת בדיקה להרשאות מרצה/מנהל (מחזירה 403 לסטודנט)"""
+    return {
+        "allowed": True,
+        "user_id": current_user["user_id"],
+        "role": current_user["role"],
+    }
