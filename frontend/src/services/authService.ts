@@ -12,6 +12,7 @@ import { StorageService } from './storage';
 import { SEED_USERS, SEED_AUDIT_LOGS } from '../data/seedData';
 import { AUTH_LIMITS, ROLES, UserRole } from '../config/constants';
 import { clearAuthSession } from './apiClient';
+import { notifyServerLogout } from './profileApi';
 
 export interface VerificationToken {
   token: string;
@@ -671,6 +672,8 @@ export class AuthService {
   }
 
   static logout(): void {
+    // סיפור 63: הודעה לשרת לפני מחיקת הטוקן מהדפדפן
+    notifyServerLogout();
     StorageService.remove(StorageService.keys.CURRENT_USER);
     clearAuthSession();
   }

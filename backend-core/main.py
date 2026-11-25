@@ -464,3 +464,78 @@ def update_profile(body: UpdateProfileRequest, current_user: dict = Depends(get_
     profile["email"] = profile["email"] or email
     profile["role"] = profile["role"] or current_user.get("role", "student")
     return {"profile": profile}
+
+
+
+# ---------------------------------------------------------------------------
+# סיפור 63 - שינוי סיסמה והתנתקות
+#
+#   POST /change-password  - המשתמש המחובר מחליף סיסמה.
+#       1. בדיקה שהסיסמה החדשה עומדת בכללי החוזק (כמו בהרשמה)
+#       2. אימות הסיסמה הנוכחית מול Supabase Auth
+#       3. עדכון הסיסמה ב-Supabase Auth
+#   POST /logout  - סיום החיבור. ה-JWT נשמר רק בדפדפן ואינו נשמר בשרת,
+#       ולכן ההתנתקות בפועל היא מחיקת הטוקן בצד הלקוח.
+# ---------------------------------------------------------------------------
+
+WRONG_CURRENT_PASSWORD_MESSAGE = "הסיסמה הנוכחית שגויה"
+
+
+class ChangePasswordRequest(BaseModel):
+    current_password: str
+    new_password: str
+
+
+def is_strong_password(password: str) -> bool:
+    """אותם כללים כמו בהרשמה (סיפור 56): לפחות 8 תווים, אות אחת ומספר אחד"""
+    has_letter = any(c.isalpha() for c in password)
+    has_digit = any(c.isdigit() for c in password)
+    return len(password) >= 8 and has_letter and has_digit
+
+
+@app.post("/change-password")
+def change_password(body: ChangePasswordRequest, current_user: dict = Depends(get_current_user)):
+    if not body.current_password:
+        raise HTTPException(status_code=400, detail="נא להזין את הסיסמה הנוכחית")
+
+    if not is_strong_password(body.new_password):
+        raise HTTPException(
+            status_code=400,
+            detail="הסיסמה החדשה חייבת להכיל לפחות 8 תווים, אות אחת ומספר אחד",
+        )
+
+    if body.new_password == body.current_password:
+        raise HTTPException(status_code=400, detail="הסיסמה החדשה חייבת להיות שונה מהנוכחית")
+
+    supabase = get_supabase()
+    if not supabase:
+        raise HTTPException(status_code=500, detail="חיבור ל-Supabase אינו מוגדר בשרת")
+
+    email = (current_user.get("email") or "").strip().lower()
+    if not email:
+        raise HTTPException(status_code=401, detail="טוקן אימות לא תקין")
+
+    # אימות הסיסמה הנוכחית. מחזירים 400 ולא 401,
+    # כדי שהממשק לא יחשוב שפג תוקף ההתחברות ויתנתק
+    try:
+        auth_res = supabase.auth.sign_in_with_password(
+            {"email": email, "password": body.current_password}
+        )
+    except Exception:
+        auth_res = None
+
+    if not auth_res or not getattr(auth_res, "user", None):
+        raise HTTPException(status_code=400, detail=WRONG_CURRENT_PASSWORD_MESSAGE)
+
+    # עדכון הסיסמה (הלקוח מחובר עכשיו בשם המשתמש, אחרי האימות)
+    try:
+        supabase.auth.update_user({"password": body.new_password})
+    except Exception:
+        raise HTTPException(status_code=500, detail="לא ניתן לעדכן את הסיסמה כרגע")
+
+    return {"changed": True, "message": "הסיסמה עודכנה בהצלחה"}
+
+
+@app.post("/logout")
+def logout(current_user: dict = Depends(get_current_user)):
+    return {"logged_out": True}

@@ -9,7 +9,7 @@ import { useAuth } from '../context/AuthContext';
 import { useToast } from '../context/ToastContext';
 import { AuthService } from '../services/authService';
 import { ROLE_LABELS, UserRole } from '../config/constants';
-import { fetchMyProfile, updateMyProfile, ServerProfile } from '../services/profileApi';
+import { fetchMyProfile, updateMyProfile, changeMyPassword, ServerProfile } from '../services/profileApi';
 import { clearAuthSession } from '../services/apiClient';
 import {
   User,
@@ -139,7 +139,7 @@ export const ProfilePage: React.FC = () => {
     setTimeout(() => setIsSaved(false), 3000);
   };
 
-  const handlePasswordSubmit = (e: React.FormEvent) => {
+  const handlePasswordSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setPasswordError('');
 
@@ -159,12 +159,31 @@ export const ProfilePage: React.FC = () => {
     }
 
     setIsUpdatingPassword(true);
-    const res = changePassword(currentPassword, newPassword);
-    setIsUpdatingPassword(false);
 
-    if (!res.success) {
-      setPasswordError(res.error || 'הסיסמה הנוכחית שגויה');
-      return;
+    // סיפור 63: משתמש שמחובר עם JWT - שינוי הסיסמה בשרת (POST /change-password)
+    if (serverProfile) {
+      const res = await changeMyPassword(currentPassword, newPassword);
+      setIsUpdatingPassword(false);
+
+      if (res.unauthorized) {
+        clearAuthSession();
+        showToast(res.message, 'error');
+        navigate('/');
+        return;
+      }
+      if (!res.success) {
+        setPasswordError(res.message);
+        return;
+      }
+    } else {
+      // משתמשי הדמו של אב-הטיפוס - בדיקה מקומית כמו קודם
+      const res = changePassword(currentPassword, newPassword);
+      setIsUpdatingPassword(false);
+
+      if (!res.success) {
+        setPasswordError(res.error || 'הסיסמה הנוכחית שגויה');
+        return;
+      }
     }
 
     showToast('הסיסמה עודכנה בהצלחה', 'success');
@@ -431,7 +450,7 @@ export const ProfilePage: React.FC = () => {
               className="px-6 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs shadow-sm transition-colors flex items-center gap-1.5 disabled:opacity-50"
             >
               <KeyRound className="w-4 h-4" />
-              <span>עדכון סיסמה</span>
+              <span>{isUpdatingPassword ? 'מעדכן...' : 'עדכון סיסמה'}</span>
             </button>
           </div>
         </form>

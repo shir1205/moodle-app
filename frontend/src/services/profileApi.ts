@@ -64,3 +64,37 @@ export async function updateMyProfile(updates: {
     return { status: 'error', message: 'השרת לא זמין כרגע. נסו שוב בעוד רגע.' };
   }
 }
+
+/**
+ * סיפור 63 - שינוי סיסמה
+ * השרת בודק את הסיסמה הנוכחית מול Supabase ומעדכן לסיסמה החדשה.
+ */
+export async function changeMyPassword(
+  currentPassword: string,
+  newPassword: string
+): Promise<{ success: boolean; message: string; unauthorized?: boolean }> {
+  try {
+    const response = await authFetch('/change-password', {
+      method: 'POST',
+      body: JSON.stringify({ current_password: currentPassword, new_password: newPassword }),
+    });
+    const data = await response.json().catch(() => ({}));
+
+    if (response.ok) return { success: true, message: data.message || 'הסיסמה עודכנה בהצלחה' };
+    if (response.status === 401) {
+      return { success: false, unauthorized: true, message: data.detail || 'פג תוקף ההתחברות, נא להתחבר מחדש' };
+    }
+    return { success: false, message: data.detail || 'לא הצלחנו לעדכן את הסיסמה' };
+  } catch {
+    return { success: false, message: 'השרת לא זמין כרגע. נסו שוב בעוד רגע.' };
+  }
+}
+
+/**
+ * סיפור 63 - התנתקות
+ * מודיעים לשרת (אם יש טוקן). את הטוקן עצמו מוחק AuthService.logout.
+ */
+export function notifyServerLogout(): void {
+  if (!getAuthToken()) return;
+  authFetch('/logout', { method: 'POST' }).catch(() => {});
+}
