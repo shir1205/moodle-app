@@ -539,3 +539,23 @@ def change_password(body: ChangePasswordRequest, current_user: dict = Depends(ge
 @app.post("/logout")
 def logout(current_user: dict = Depends(get_current_user)):
     return {"logged_out": True}
+
+# ---------------------------------------------------------------------------
+# סיפור 88 - אכיפת הרשאות מבוססת תפקידים (RBAC Middleware / Dependency)
+# ---------------------------------------------------------------------------
+
+VALID_ROLES = {"student", "ta", "lecturer", "admin"}
+
+
+def require_roles(*allowed_roles: str):
+    """Dependency לאכיפת הרשאות לפי תפקיד - מחזיר 403 Forbidden למשתמש לא מורשה"""
+    def role_checker(current_user: dict = Depends(get_current_user)) -> dict:
+        user_role = (current_user.get("role") or "student").strip().lower()
+        if user_role not in allowed_roles:
+            raise HTTPException(
+                status_code=403,
+                detail="אין לך הרשאה לבצע פעולה זו",
+            )
+        return current_user
+
+    return role_checker
