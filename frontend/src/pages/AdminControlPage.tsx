@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { useToast } from '../context/ToastContext';
@@ -11,6 +11,7 @@ import { AuthService } from '../services/authService';
 import { CourseService } from '../services/courseService';
 import { AnalyticsService } from '../services/analyticsService';
 import { NotificationService } from '../services/notificationService';
+import { fetchAllUsersFromApi, updateUserRoleInApi, BackendUserRecord } from '../services/adminApi';
 import { User, AuditLogEntry, SystemSettings } from '../types';
 import { Modal } from '../components/common/Modal';
 import { ROLES, ROLE_LABELS, UserRole } from '../config/constants';
@@ -21,11 +22,8 @@ import {
   History,
   Activity,
   Mail,
-  Clock,
   CheckCircle2,
-  AlertCircle,
   Search,
-  Edit,
   RefreshCw,
   Server,
   Zap,
@@ -61,6 +59,8 @@ export const AdminControlPage: React.FC = () => {
   );
 
   // User Management state
+  const [usersList, setUsersList] = useState<User[]>(allUsers);
+  const [savingRole, setSavingRole] = useState(false);
   const [userSearch, setUserSearch] = useState('');
   const [editingUser, setEditingUser] = useState<User | null>(null);
   const [targetRole, setTargetRole] = useState<UserRole>(ROLES.STUDENT);
@@ -74,11 +74,42 @@ export const AdminControlPage: React.FC = () => {
 
   const courses = CourseService.getCourses();
 
-  const filteredUsers = allUsers.filter(
+  const mapBackendUser = (u: BackendUserRecord): User => ({
+    id: u.id,
+    name: u.full_name || u.email.split('@')[0],
+    email: u.email,
+    role: (u.role as UserRole) || ROLES.STUDENT,
+    department: u.department || 'לא הוגדרה מחלקה',
+    avatarUrl:
+      u.avatar_url ||
+      `https://api.dicebear.com/7.x/initials/svg?seed=${encodeURIComponent(u.full_name || u.email)}`,
+    isVerified: true,
+    twoFactorEnabled: false,
+    hasSetupTwoFactor: false,
+    registeredAt: u.created_at || new Date().toISOString(),
+    assignedCourseIds: [],
+    status: 'active',
+  });
+
+  const loadUsersFromBackend = () => {
+    fetchAllUsersFromApi()
+      .then((backendUsers) => {
+        setUsersList(backendUsers.map(mapBackendUser));
+      })
+      .catch(() => {
+        setUsersList(allUsers);
+      });
+  };
+
+  useEffect(() => {
+    loadUsersFromBackend();
+  }, []);
+
+  const filteredUsers = usersList.filter(
     (u) =>
-      u.name.includes(userSearch) ||
+      u.name.toLowerCase().includes(userSearch.toLowerCase()) ||
       u.email.toLowerCase().includes(userSearch.toLowerCase()) ||
-      u.department.includes(userSearch)
+      (u.department || '').toLowerCase().includes(userSearch.toLowerCase())
   );
 
   const handleUpdateSettings = (e: React.FormEvent) => {
@@ -105,6 +136,7 @@ export const AdminControlPage: React.FC = () => {
     setDeliveryStats(NotificationService.getDeliveryStats());
     setNotificationsLog(NotificationService.getAllNotificationsLog());
     setAuditLogs(AuthService.getAuditLogs());
+    loadUsersFromBackend();
     showToast('יומני המערכת רועננו', 'info');
   };
 
@@ -120,15 +152,32 @@ export const AdminControlPage: React.FC = () => {
     );
   };
 
-  const handleConfirmRoleChange = () => {
+  const handleConfirmRoleChange = async () => {
     if (!editingUser || !currentUser) return;
 
-    AuthService.updateUserRole(currentUser.id, editingUser.id, targetRole, targetCourseIds);
-    refreshUsers();
-    setAuditLogs(AuthService.getAuditLogs());
-    setShowRoleConfirmModal(false);
-    setEditingUser(null);
-    showToast(`תפקידו של ${editingUser.name} עודכן בהצלחה ל-${ROLE_LABELS[targetRole]}!`, 'success');
+    setSavingRole(true);
+    try {
+      await updateUserRoleInApi(editingUser.id, targetRole);
+
+      setUsersList((prev) =>
+        prev.map((u) =>
+          u.id === editingUser.id
+            ? { ...u, role: targetRole, assignedCourseIds: targetCourseIds }
+            : u
+        )
+      );
+
+      AuthService.updateUserRole(currentUser.id, editingUser.id, targetRole, targetCourseIds);
+      refreshUsers();
+      setAuditLogs(AuthService.getAuditLogs());
+      setShowRoleConfirmModal(false);
+      setEditingUser(null);
+      showToast(`תפקידו של ${editingUser.name} עודכן בהצלחה ל-${ROLE_LABELS[targetRole]}!`, 'success');
+    } catch (err: any) {
+      showToast(err?.message || 'שגיאה בעדכון תפקיד המשתמש', 'error');
+    } finally {
+      setSavingRole(false);
+    }
   };
 
   const handleReset2FA = (targetUser: User) => {
@@ -684,10 +733,11 @@ export const AdminControlPage: React.FC = () => {
             </button>
             <button
               type="button"
+              disabled={savingRole}
               onClick={handleConfirmRoleChange}
-              className="px-5 py-2 text-xs font-bold text-white bg-indigo-600 hover:bg-indigo-700 rounded-xl shadow-sm"
+              className="px-5 py-2 text-xs font-bold text-white bg-indigo-600 hover:bg-indigo-700 rounded-xl shadow-sm disabled:opacity-50"
             >
-              אשר ועדכן תפקיד
+              {savingRole ? 'שומר...' : 'אשר ועדכן תפקיד'}
             </button>
           </div>
         </div>
