@@ -1,3 +1,6 @@
+import os
+import uuid
+
 import pytest
 import requests
 
@@ -568,3 +571,115 @@ def test_notifications_integration():
     )
     assert read_all_resp.status_code == 200
     assert "updated_count" in read_all_resp.json()
+
+
+def test_encouragement_notification_e2e():
+    """Story #9 E2E: Lecturer sends encouragement notification and student sees it in GET /notifications/."""
+    # 1. Unauthenticated request must be rejected with 401
+    unauth_resp = requests.post(
+        f"{SERVICES['core']}/notifications/encouragement",
+        json={
+            "student_id": str(uuid.uuid4()),
+            "title": "Unauthorized Check",
+            "message": "Should fail with 401",
+        },
+        timeout=10,
+    )
+    assert unauth_resp.status_code == 401
+
+    # 2. Authenticate as student and verify RBAC blocks students with 403
+    student_email = os.environ.get("TEST_STUDENT_EMAIL", "user@example.com")
+    student_password = os.environ.get("TEST_STUDENT_PASSWORD", "Password123!")
+    student_login = requests.post(
+        f"{SERVICES['core']}/login",
+        json={"email": student_email, "password": student_password},
+        timeout=10,
+    )
+    assert student_login.status_code == 200
+    student_data = student_login.json()
+    student_token = student_data["access_token"]
+    student_id = student_data["user"]["id"]
+
+    forbidden_resp = requests.post(
+        f"{SERVICES['core']}/notifications/encouragement",
+        json={
+            "student_id": student_id,
+            "title": "Forbidden Student Attempt",
+            "message": "Students cannot send encouragement notifications",
+        },
+        headers={"Authorization": f"Bearer {student_token}"},
+        timeout=10,
+    )
+    assert forbidden_resp.status_code == 403
+    assert forbidden_resp.json().get("detail") == "אין הרשאה לבצע פעולה זו"
+
+    # 3. Obtain lecturer token (via TEST_LECTURER_* login or JWT secret if configured)
+    lecturer_token = None
+    lecturer_email = os.environ.get("TEST_LECTURER_EMAIL", "lecturer@example.com")
+    lecturer_password = os.environ.get("TEST_LECTURER_PASSWORD", "Password123!")
+    lecturer_login = requests.post(
+        f"{SERVICES['core']}/login",
+        json={"email": lecturer_email, "password": lecturer_password},
+        timeout=10,
+    )
+    if lecturer_login.status_code == 200:
+        lecturer_user = lecturer_login.json().get("user", {})
+        if (lecturer_user.get("role") or "").lower() in {"lecturer", "admin"}:
+            lecturer_token = lecturer_login.json()["access_token"]
+
+    if not lecturer_token:
+        jwt_secret = os.environ.get("JWT_SECRET") or os.environ.get("SUPABASE_KEY")
+        if jwt_secret:
+            import jwt as pyjwt
+
+            lecturer_token = pyjwt.encode(
+                {
+                    "sub": str(uuid.uuid4()),
+                    "email": lecturer_email,
+                    "role": "lecturer",
+                },
+                jwt_secret,
+                algorithm="HS256",
+            )
+
+    if not lecturer_token:
+        pytest.skip("Lecturer credentials or JWT_SECRET required to run full Story #9 E2E flow")
+
+    # 4. Lecturer sends encouragement notification to the student
+    unique_title = f"Story 9 Encouragement {uuid.uuid4().hex[:8]}"
+    unique_message = "אנחנו איתך! בוא/י נקבע פגישת תגבור קצרה השבוע."
+    send_resp = requests.post(
+        f"{SERVICES['core']}/notifications/encouragement",
+        json={
+            "student_id": student_id,
+            "title": unique_title,
+            "message": unique_message,
+            "course_id": "course-1",
+        },
+        headers={"Authorization": f"Bearer {lecturer_token}"},
+        timeout=10,
+    )
+    assert send_resp.status_code == 201
+    created = send_resp.json()
+    assert created["user_id"] == student_id
+    assert created["title"] == unique_title
+    assert created["message"] == unique_message
+    assert created["is_read"] is False
+    assert created["link"] == "/courses/course-1"
+
+    # 5. Student retrieves notifications and verifies the encouragement notification appears
+    inbox_resp = requests.get(
+        f"{SERVICES['core']}/notifications/",
+        headers={"Authorization": f"Bearer {student_token}"},
+        timeout=10,
+    )
+    assert inbox_resp.status_code == 200
+    notifications = inbox_resp.json()
+    assert any(
+        item.get("id") == created["id"]
+        and item.get("user_id") == student_id
+        and item.get("title") == unique_title
+        and item.get("message") == unique_message
+        and item.get("is_read") is False
+        for item in notifications
+    )
