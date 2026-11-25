@@ -1,10 +1,12 @@
 """CampuScope AI Assistant (Team 3)"""
+import json
 import os
+import sys
 from pathlib import Path
 from uuid import uuid4
 
 from dotenv import load_dotenv
-from fastapi import FastAPI, HTTPException
+from fastapi import Depends, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from google import genai
 from pydantic import BaseModel
@@ -15,6 +17,13 @@ from navigation import find_destination, is_navigation_question
 
 load_dotenv()
 load_dotenv(Path(__file__).resolve().parent.parent / ".env")
+
+# חיבור למודול האימות המשותף של צוות 1 (backend-core/auth_middleware.py)
+_CORE_DIR = Path(__file__).resolve().parent.parent / "backend-core"
+if str(_CORE_DIR) not in sys.path:
+    sys.path.insert(0, str(_CORE_DIR))
+
+from auth_middleware import get_current_user  # noqa: E402
 
 app = FastAPI(title="CampuScope AI Assistant")
 
@@ -195,3 +204,162 @@ def get_conversation_history(conversation_id: str):
     if not conv:
         raise HTTPException(status_code=404, detail="Conversation not found")
     return conv
+
+
+class FeedbackRequest(BaseModel):
+    question: str
+    solution: str
+    course_id: str | None = None
+    assignment_id: str | None = None
+
+
+class LogicalError(BaseModel):
+    issue: str
+    location: str = "כללי בפתרון"
+    explanation: str
+    fix_hint: str = ""
+
+
+class FeedbackResponse(BaseModel):
+    user_id: str
+    course_id: str | None = None
+    assignment_id: str | None = None
+    positive_points: list[str]
+    logical_errors: list[LogicalError]
+    improvement_suggestions: list[str]
+    is_logical_valid: bool
+    is_fallback: bool = False
+
+
+def _extract_json_block(text: str) -> dict:
+    cleaned = text.strip()
+    if cleaned.startswith("```"):
+        lines = cleaned.splitlines()
+        if lines and lines[0].startswith("```"):
+            lines = lines[1:]
+        if lines and lines[-1].strip() == "```":
+            lines = lines[:-1]
+        cleaned = "\n".join(lines).strip()
+    start = cleaned.find("{")
+    end = cleaned.rfind("}")
+    if start == -1 or end == -1 or end <= start:
+        raise ValueError("No valid JSON object in model response")
+    return json.loads(cleaned[start : end + 1])
+
+
+@app.post("/api/ai/feedback", response_model=FeedbackResponse)
+def ai_feedback(
+    req: FeedbackRequest,
+    current_user: dict = Depends(get_current_user),
+):
+    """Story 69 (3.3.1): משוב ראשוני על פתרון | Story 70 (3.3.2): זיהוי טעויות לוגיות"""
+    question_text = (req.question or "").strip()
+    solution_text = (req.solution or "").strip()
+
+    # אם חסרה שאלה או פתרון — לא שולחים בקשה לשירות ה-AI
+    if not question_text and not solution_text:
+        raise HTTPException(
+            status_code=400,
+            detail="יש להשלים את השאלה ואת הפתרון לפני קבלת משוב",
+        )
+    if not question_text:
+        raise HTTPException(
+            status_code=400,
+            detail="יש להשלים את שדה השאלה החסר לפני קבלת משוב",
+        )
+    if not solution_text:
+        raise HTTPException(
+            status_code=400,
+            detail="יש להשלים את שדה הפתרון החסר לפני קבלת משוב",
+        )
+
+    materials_text = ""
+    if req.course_id:
+        materials = get_mock_materials(req.course_id)
+        if materials:
+            parts = [
+                f"- {m['title']}: {m.get('mock_summary_text', '')}"
+                for m in materials
+            ]
+            materials_text = "\nחומרי לימוד רלוונטיים מהקורס:\n" + "\n".join(parts)
+
+    assignment_line = f"\nמזהה מטלה: {req.assignment_id}" if req.assignment_id else ""
+
+    prompt = (
+        "את עוזרת הוראה אקדמית בעברית. נתח את הפתרון של הסטודנטית לשאלה, "
+        "והחזר תשובת JSON בלבד (ללא טקסט נוסף וללא markdown) במבנה המדויק הבא:\n"
+        "{\n"
+        '  "positive_points": ["נקודה חיובית 1"],\n'
+        '  "logical_errors": [\n'
+        "    {\n"
+        '      "issue": "שם קצר של הטעות הלוגית",\n'
+        '      "location": "החלק בפתרון שבו מופיעה הטעות",\n'
+        '      "explanation": "הסבר מדוע יש כאן טעות לוגית",\n'
+        '      "fix_hint": "רמז קצר לתיקון"\n'
+        "    }\n"
+        "  ],\n"
+        '  "improvement_suggestions": ["הצעה לשיפור 1"]\n'
+        "}\n"
+        "אם אין טעויות לוגיות, החזר רשימה ריקה עבור logical_errors."
+        f"{assignment_line}{materials_text}\n"
+        f"השאלה:\n{question_text}\n\n"
+        f"פתרון הסטודנטית:\n{solution_text}"
+    )
+
+    try:
+        raw_text = ask_gemini(prompt)
+        parsed = _extract_json_block(raw_text)
+
+        positive_points = [
+            str(item).strip()
+            for item in parsed.get("positive_points", [])
+            if str(item).strip()
+        ] or ["הפתרון מנסה להתמודד ישירות עם דרישות השאלה"]
+
+        raw_errors = parsed.get("logical_errors", [])
+        logical_errors: list[LogicalError] = []
+        if isinstance(raw_errors, list):
+            for err in raw_errors:
+                if isinstance(err, dict) and str(err.get("issue", "")).strip():
+                    logical_errors.append(
+                        LogicalError(
+                            issue=str(err.get("issue")).strip(),
+                            location=str(err.get("location") or "כללי בפתרון").strip(),
+                            explanation=str(
+                                err.get("explanation") or "נמצאה בעיה לוגית בפתרון"
+                            ).strip(),
+                            fix_hint=str(err.get("fix_hint") or "").strip(),
+                        )
+                    )
+
+        improvement_suggestions = [
+            str(item).strip()
+            for item in parsed.get("improvement_suggestions", [])
+            if str(item).strip()
+        ] or ["מומלץ לבדוק מקרי קצה ולאמת כל שלב מול הגדרות השאלה"]
+
+        return FeedbackResponse(
+            user_id=str(current_user.get("user_id", "")),
+            course_id=req.course_id,
+            assignment_id=req.assignment_id,
+            positive_points=positive_points,
+            logical_errors=logical_errors,
+            improvement_suggestions=improvement_suggestions,
+            is_logical_valid=len(logical_errors) == 0,
+            is_fallback=False,
+        )
+    except HTTPException:
+        raise
+    except Exception:
+        return FeedbackResponse(
+            user_id=str(current_user.get("user_id", "")),
+            course_id=req.course_id,
+            assignment_id=req.assignment_id,
+            positive_points=["התקבל ניסיון פתרון מסודר המכוון לשאלה"],
+            logical_errors=[],
+            improvement_suggestions=[
+                "כרגע שירות ה-AI במצב גיבוי; מומלץ לבדוק מקרי קצה ותנאי עצירה/הנחות בסיס ידנית"
+            ],
+            is_logical_valid=True,
+            is_fallback=True,
+        )
