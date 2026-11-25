@@ -38,3 +38,29 @@ export async function fetchMyProfile(): Promise<ProfileResult> {
     return { status: 'error', message: 'השרת לא זמין כרגע. נסו שוב בעוד רגע.' };
   }
 }
+/**
+ * סיפור 62 - עדכון פרטי משתמש
+ * שליחת השם והמחלקה החדשים לשרת (PUT /profile). השרת מעדכן רק את המשתמש שבטוקן.
+ */
+export async function updateMyProfile(updates: {
+  full_name?: string;
+  department?: string;
+}): Promise<ProfileResult> {
+  if (!getAuthToken()) return { status: 'no-session' };
+
+  try {
+    const response = await authFetch('/profile', {
+      method: 'PUT',
+      body: JSON.stringify(updates),
+    });
+    const data = await response.json().catch(() => ({}));
+
+    if (response.ok && data.profile) return { status: 'ok', profile: data.profile };
+    if (response.status === 401) {
+      return { status: 'unauthorized', message: data.detail || 'פג תוקף ההתחברות, נא להתחבר מחדש' };
+    }
+    return { status: 'error', message: data.detail || 'לא הצלחנו לשמור את השינויים' };
+  } catch {
+    return { status: 'error', message: 'השרת לא זמין כרגע. נסו שוב בעוד רגע.' };
+  }
+}
