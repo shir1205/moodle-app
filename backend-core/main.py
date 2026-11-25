@@ -19,6 +19,7 @@ import jwt
 from fastapi import Depends, FastAPI, Header, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from notifications_router import router as notifications_router
+from auth_middleware import JWT_ALGORITHM, JWT_SECRET, get_current_user
 from pydantic import BaseModel
 
 app = FastAPI(title="CampuScope Core & Users")
@@ -38,8 +39,7 @@ app.add_middleware(
 )
 
 # הגדרות JWT (סיפור 67) ונעילת חשבון (סיפור 58)
-JWT_SECRET = os.environ.get("JWT_SECRET", os.environ.get("SUPABASE_KEY", "campuscope-dev-secret-key"))
-JWT_ALGORITHM = "HS256"
+
 JWT_EXPIRE_MINUTES = 60 * 24  # 24 שעות
 
 MAX_LOGIN_ATTEMPTS = 5
@@ -74,27 +74,6 @@ def create_access_token(user_id: str, email: str, role: str = "student") -> str:
     }
     return jwt.encode(payload, JWT_SECRET, algorithm=JWT_ALGORITHM)
 
-
-def get_current_user(authorization: Optional[str] = Header(None)) -> dict:
-    """Middleware / Dependency שבודק את ה-JWT בכל בקשה מאובטחת"""
-    if not authorization or not authorization.startswith("Bearer "):
-        raise HTTPException(
-            status_code=401,
-            detail="חסר טוקן אימות תקין (Authorization: Bearer <token>)",
-        )
-
-    token = authorization.split(" ", 1)[1].strip()
-    try:
-        payload = jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGORITHM])
-        return {
-            "id": payload.get("sub"),
-            "email": payload.get("email"),
-            "role": payload.get("role", "student"),
-        }
-    except jwt.ExpiredSignatureError:
-        raise HTTPException(status_code=401, detail="פג תוקף הטוקן, נא להתחבר מחדש")
-    except jwt.InvalidTokenError:
-        raise HTTPException(status_code=401, detail="טוקן אימות לא תקין")
 
 
 @app.get("/health")
