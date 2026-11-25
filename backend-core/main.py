@@ -401,3 +401,66 @@ def read_profile(current_user: dict = Depends(get_current_user)):
     profile["email"] = profile["email"] or email
     profile["role"] = profile["role"] or current_user.get("role", "student")
     return {"profile": profile}
+
+    
+
+# ---------------------------------------------------------------------------
+# סיפור 62 - עדכון פרטי משתמש (Profile Update)
+#
+#   PUT /profile  - המשתמש המחובר מעדכן את הפרטים של עצמו בלבד.
+#   המשתמש מזוהה לפי ה-JWT, ולכן אי אפשר לעדכן פרופיל של משתמש אחר.
+#   אפשר לעדכן רק שם מלא ומחלקה. מייל ותפקיד לא ניתנים לשינוי כאן
+#   (שינוי תפקיד נעשה רק על ידי מנהל - סיפור 64).
+# ---------------------------------------------------------------------------
+
+MAX_PROFILE_FIELD_LENGTH = 100
+
+
+class UpdateProfileRequest(BaseModel):
+    full_name: Optional[str] = None
+    department: Optional[str] = None
+
+
+@app.put("/profile")
+def update_profile(body: UpdateProfileRequest, current_user: dict = Depends(get_current_user)):
+    updates = {}
+
+    if body.full_name is not None:
+        full_name = body.full_name.strip()
+        if not full_name:
+            raise HTTPException(status_code=400, detail="השם המלא לא יכול להיות ריק")
+        if len(full_name) > MAX_PROFILE_FIELD_LENGTH:
+            raise HTTPException(status_code=400, detail="השם המלא ארוך מדי (עד 100 תווים)")
+        updates["full_name"] = full_name
+
+    if body.department is not None:
+        department = body.department.strip()
+        if len(department) > MAX_PROFILE_FIELD_LENGTH:
+            raise HTTPException(status_code=400, detail="שם המחלקה ארוך מדי (עד 100 תווים)")
+        updates["department"] = department
+
+    if not updates:
+        raise HTTPException(status_code=400, detail="לא נשלחו פרטים לעדכון")
+
+    supabase = get_supabase()
+    if not supabase:
+        raise HTTPException(status_code=500, detail="חיבור ל-Supabase אינו מוגדר בשרת")
+
+    email = (current_user.get("email") or "").strip().lower()
+    if not email:
+        raise HTTPException(status_code=401, detail="טוקן אימות לא תקין")
+
+    try:
+        result = supabase.table("users").update(updates).eq("email", email).execute()
+    except Exception:
+        raise HTTPException(status_code=500, detail="לא ניתן לעדכן את הפרופיל כרגע")
+
+    record = result.data[0] if result.data else None
+    if not record:
+        raise HTTPException(status_code=404, detail="פרטי המשתמש לא נמצאו")
+
+    profile = {field: record.get(field) for field in PROFILE_FIELDS}
+    profile["id"] = current_user.get("id")
+    profile["email"] = profile["email"] or email
+    profile["role"] = profile["role"] or current_user.get("role", "student")
+    return {"profile": profile}

@@ -9,7 +9,7 @@ import { useAuth } from '../context/AuthContext';
 import { useToast } from '../context/ToastContext';
 import { AuthService } from '../services/authService';
 import { ROLE_LABELS, UserRole } from '../config/constants';
-import { fetchMyProfile, ServerProfile } from '../services/profileApi';
+import { fetchMyProfile, updateMyProfile, ServerProfile } from '../services/profileApi';
 import { clearAuthSession } from '../services/apiClient';
 import {
   User,
@@ -92,21 +92,51 @@ export const ProfilePage: React.FC = () => {
     }
   };
 
-  const handleProfileSubmit = (e: React.FormEvent) => {
+  const [isSavingProfile, setIsSavingProfile] = useState(false);
+
+  const handleProfileSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!name.trim()) return;
-
-    const ok = updateProfile({
-      name: name.trim(),
-      department: department.trim(),
-      avatarUrl,
-    });
-
-    if (ok) {
-      setIsSaved(true);
-      showToast('הפרופיל עודכן בהצלחה!', 'success');
-      setTimeout(() => setIsSaved(false), 3000);
+    if (!name.trim()) {
+      showToast('השם המלא לא יכול להיות ריק', 'error');
+      return;
     }
+
+    // סיפור 62: משתמש שמחובר עם JWT - שמירה בשרת (PUT /profile)
+    if (serverProfile) {
+      setIsSavingProfile(true);
+      const result = await updateMyProfile({
+        full_name: name.trim(),
+        department: department.trim(),
+      });
+      setIsSavingProfile(false);
+
+      if (result.status === 'unauthorized') {
+        clearAuthSession();
+        showToast(result.message, 'error');
+        navigate('/');
+        return;
+      }
+      if (result.status !== 'ok') {
+        showToast('message' in result ? result.message : 'לא הצלחנו לשמור את השינויים', 'error');
+        return;
+      }
+
+      setServerProfile(result.profile);
+      // עדכון השם גם בכותרת העליונה של האתר
+      updateProfile({ name: name.trim(), department: department.trim(), avatarUrl });
+    } else {
+      // משתמשי הדמו של אב-הטיפוס - שמירה מקומית כמו קודם
+      const ok = updateProfile({
+        name: name.trim(),
+        department: department.trim(),
+        avatarUrl,
+      });
+      if (!ok) return;
+    }
+
+    setIsSaved(true);
+    showToast('הפרופיל עודכן בהצלחה!', 'success');
+    setTimeout(() => setIsSaved(false), 3000);
   };
 
   const handlePasswordSubmit = (e: React.FormEvent) => {
@@ -264,10 +294,11 @@ export const ProfilePage: React.FC = () => {
           <div className="pt-2 flex justify-end">
             <button
               type="submit"
-              className="px-6 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs shadow-sm transition-colors flex items-center gap-1.5"
+              disabled={isSavingProfile}
+              className="px-6 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs shadow-sm transition-colors flex items-center gap-1.5 disabled:opacity-50"
             >
               <Save className="w-4 h-4" />
-              <span>שמירת שינויים</span>
+              <span>{isSavingProfile ? 'שומר...' : 'שמירת שינויים'}</span>
             </button>
           </div>
         </form>
