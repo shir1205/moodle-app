@@ -638,21 +638,123 @@ def test_notifications_integration():
     assert "updated_count" in read_all_resp.json()
 
 
-def _get_jwt_secret() -> str | None:
-    """Read JWT_SECRET or SUPABASE_KEY from env (or root .env read-only) for local test JWT signing."""
-    secret = os.environ.get("JWT_SECRET") or os.environ.get("SUPABASE_KEY")
-    if secret:
-        return secret
+def _read_root_env() -> dict[str, str]:
+    """Read key=value pairs from the root .env file if present."""
     env_path = Path(__file__).resolve().parent.parent / ".env"
+    env_values: dict[str, str] = {}
     if env_path.exists():
-        env_values: dict[str, str] = {}
         for line in env_path.read_text(encoding="utf-8").splitlines():
             stripped = line.strip()
             if "=" in stripped and not stripped.startswith("#"):
                 key, val = stripped.split("=", 1)
                 env_values[key.strip()] = val.strip()
-        return env_values.get("JWT_SECRET") or env_values.get("SUPABASE_KEY")
-    return None
+    return env_values
+
+
+def _get_jwt_secret() -> str | None:
+    """Read JWT_SECRET or SUPABASE_KEY from env (or root .env read-only) for local test JWT signing."""
+    secret = os.environ.get("JWT_SECRET") or os.environ.get("SUPABASE_KEY")
+    if secret:
+        return secret
+    env_values = _read_root_env()
+    return env_values.get("JWT_SECRET") or env_values.get("SUPABASE_KEY")
+
+
+def _sign_test_jwt(user_id: str, email: str, role: str) -> str | None:
+    """Sign a local HS256 JWT for E2E tests when live credentials use a different role."""
+    jwt_secret = _get_jwt_secret()
+    if not jwt_secret:
+        return None
+    import jwt as pyjwt
+
+    return pyjwt.encode(
+        {
+            "sub": user_id,
+            "email": email,
+            "role": role,
+        },
+        jwt_secret,
+        algorithm="HS256",
+    )
+
+
+def _get_student_and_lecturer_tokens() -> tuple[str | None, str | None, str | None]:
+    """Obtain (student_token, student_id, lecturer_token) via /login or local JWT signing fallback."""
+    student_email = os.environ.get("TEST_STUDENT_EMAIL", "user@example.com")
+    student_password = os.environ.get("TEST_STUDENT_PASSWORD", "Password123!")
+
+    student_token: str | None = None
+    student_id: str | None = None
+    lecturer_token: str | None = None
+
+    student_login = requests.post(
+        f"{SERVICES['core']}/login",
+        json={"email": student_email, "password": student_password},
+        timeout=10,
+    )
+    if student_login.status_code == 200:
+        login_json = student_login.json()
+        login_user = login_json.get("user", {})
+        login_role = (login_user.get("role") or "").strip().lower()
+        if login_role == "student":
+            student_token = login_json["access_token"]
+            student_id = login_user.get("id")
+        elif login_role in {"lecturer", "admin"}:
+            lecturer_token = login_json["access_token"]
+
+    if not student_token:
+        synthetic_student_id = str(uuid.uuid4())
+        signed_student = _sign_test_jwt(
+            synthetic_student_id,
+            "student.e2e@example.com",
+            "student",
+        )
+        if signed_student:
+            student_token = signed_student
+            student_id = synthetic_student_id
+
+    if not lecturer_token:
+        lecturer_email = os.environ.get("TEST_LECTURER_EMAIL", "lecturer@example.com")
+        lecturer_password = os.environ.get("TEST_LECTURER_PASSWORD", "Password123!")
+        lecturer_login = requests.post(
+            f"{SERVICES['core']}/login",
+            json={"email": lecturer_email, "password": lecturer_password},
+            timeout=10,
+        )
+        if lecturer_login.status_code == 200:
+            lecturer_user = lecturer_login.json().get("user", {})
+            if (lecturer_user.get("role") or "").strip().lower() in {"lecturer", "admin"}:
+                lecturer_token = lecturer_login.json()["access_token"]
+
+    if not lecturer_token:
+        lecturer_email = os.environ.get("TEST_LECTURER_EMAIL", "lecturer@example.com")
+        lecturer_token = _sign_test_jwt(str(uuid.uuid4()), lecturer_email, "lecturer")
+
+    return student_token, student_id, lecturer_token
+
+
+def _cleanup_notification(notification_id: int | str, student_token: str) -> None:
+    """Best-effort cleanup: mark as read via API and delete the created row from Supabase if available."""
+    try:
+        requests.patch(
+            f"{SERVICES['core']}/notifications/{notification_id}/read",
+            headers={"Authorization": f"Bearer {student_token}"},
+            timeout=10,
+        )
+    except Exception:
+        pass
+
+    env_values = _read_root_env()
+    supabase_url = os.environ.get("SUPABASE_URL") or env_values.get("SUPABASE_URL")
+    supabase_key = os.environ.get("SUPABASE_KEY") or env_values.get("SUPABASE_KEY")
+    if supabase_url and supabase_key:
+        try:
+            from supabase import create_client
+
+            client = create_client(supabase_url, supabase_key)
+            client.table("notifications").delete().eq("id", notification_id).execute()
+        except Exception:
+            pass
 
 
 def test_encouragement_notification_e2e():
@@ -669,18 +771,10 @@ def test_encouragement_notification_e2e():
     )
     assert unauth_resp.status_code == 401
 
-    # 2. Authenticate as student and verify RBAC blocks students with 403
-    student_email = os.environ.get("TEST_STUDENT_EMAIL", "user@example.com")
-    student_password = os.environ.get("TEST_STUDENT_PASSWORD", "Password123!")
-    student_login = requests.post(
-        f"{SERVICES['core']}/login",
-        json={"email": student_email, "password": student_password},
-        timeout=10,
-    )
-    assert student_login.status_code == 200
-    student_data = student_login.json()
-    student_token = student_data["access_token"]
-    student_id = student_data["user"]["id"]
+    # 2. Obtain student + lecturer tokens and verify RBAC blocks students with 403
+    student_token, student_id, lecturer_token = _get_student_and_lecturer_tokens()
+    if not student_token or not student_id:
+        pytest.skip("Student credentials or JWT_SECRET required to verify 403 and inbox for Story #9 E2E")
 
     forbidden_resp = requests.post(
         f"{SERVICES['core']}/notifications/encouragement",
@@ -695,76 +789,54 @@ def test_encouragement_notification_e2e():
     assert forbidden_resp.status_code == 403
     assert forbidden_resp.json().get("detail") == "אין הרשאה לבצע פעולה זו"
 
-    # 3. Obtain lecturer token (via TEST_LECTURER_* login or JWT secret if configured)
-    lecturer_token = None
-    lecturer_email = os.environ.get("TEST_LECTURER_EMAIL", "lecturer@example.com")
-    lecturer_password = os.environ.get("TEST_LECTURER_PASSWORD", "Password123!")
-    lecturer_login = requests.post(
-        f"{SERVICES['core']}/login",
-        json={"email": lecturer_email, "password": lecturer_password},
-        timeout=10,
-    )
-    if lecturer_login.status_code == 200:
-        lecturer_user = lecturer_login.json().get("user", {})
-        if (lecturer_user.get("role") or "").lower() in {"lecturer", "admin"}:
-            lecturer_token = lecturer_login.json()["access_token"]
-
-    if not lecturer_token:
-        jwt_secret = _get_jwt_secret()
-        if jwt_secret:
-            import jwt as pyjwt
-
-            lecturer_token = pyjwt.encode(
-                {
-                    "sub": str(uuid.uuid4()),
-                    "email": lecturer_email,
-                    "role": "lecturer",
-                },
-                jwt_secret,
-                algorithm="HS256",
-            )
-
+    # 3. Require lecturer/admin token for sending encouragement notification
     if not lecturer_token:
         pytest.skip("Lecturer credentials or JWT_SECRET required to run full Story #9 E2E flow")
 
-    # 4. Lecturer sends encouragement notification to the student
+    # 4. Lecturer sends encouragement notification to the student and cleans up afterwards
     unique_title = f"Story 9 Encouragement {uuid.uuid4().hex[:8]}"
     unique_message = "אנחנו איתך! בוא/י נקבע פגישת תגבור קצרה השבוע."
-    send_resp = requests.post(
-        f"{SERVICES['core']}/notifications/encouragement",
-        json={
-            "student_id": student_id,
-            "title": unique_title,
-            "message": unique_message,
-            "course_id": "course-1",
-        },
-        headers={"Authorization": f"Bearer {lecturer_token}"},
-        timeout=10,
-    )
-    assert send_resp.status_code == 201
-    created = send_resp.json()
-    assert created["user_id"] == student_id
-    assert created["title"] == unique_title
-    assert created["message"] == unique_message
-    assert created["is_read"] is False
-    assert created["link"] == "/courses/course-1"
+    created_id = None
+    try:
+        send_resp = requests.post(
+            f"{SERVICES['core']}/notifications/encouragement",
+            json={
+                "student_id": student_id,
+                "title": unique_title,
+                "message": unique_message,
+                "course_id": "course-1",
+            },
+            headers={"Authorization": f"Bearer {lecturer_token}"},
+            timeout=10,
+        )
+        assert send_resp.status_code == 201
+        created = send_resp.json()
+        created_id = created["id"]
+        assert created["user_id"] == student_id
+        assert created["title"] == unique_title
+        assert created["message"] == unique_message
+        assert created["is_read"] is False
+        assert created["link"] == "/courses/course-1"
 
-    # 5. Student retrieves notifications and verifies the encouragement notification appears
-    inbox_resp = requests.get(
-        f"{SERVICES['core']}/notifications/",
-        headers={"Authorization": f"Bearer {student_token}"},
-        timeout=10,
-    )
-    assert inbox_resp.status_code == 200
-    notifications = inbox_resp.json()
-    assert any(
-        item.get("id") == created["id"]
-        and item.get("user_id") == student_id
-        and item.get("title") == unique_title
-        and item.get("message") == unique_message
-        and item.get("is_read") is False
-        for item in notifications
-    )
+        # 5. Student retrieves notifications and verifies the encouragement notification appears
+        inbox_resp = requests.get(
+            f"{SERVICES['core']}/notifications/",
+            headers={"Authorization": f"Bearer {student_token}"},
+            timeout=10,
+        )
+        assert inbox_resp.status_code == 200
+        notifications = inbox_resp.json()
+        assert any(
+            item.get("id") == created_id
+            and item.get("user_id") == student_id
+            and item.get("title") == unique_title
+            and item.get("message") == unique_message
+            and item.get("is_read") is False
+            for item in notifications
+        )
+    finally:
+        if created_id is not None:
+            _cleanup_notification(created_id, student_token)
 
 
 # ==========================================
@@ -778,39 +850,7 @@ def test_at_risk_students_e2e():
     assert unauth_resp.status_code == 401
 
     # 2. Authenticate and obtain both a student token (403) and a lecturer/admin token (200)
-    student_email = os.environ.get("TEST_STUDENT_EMAIL", "user@example.com")
-    student_password = os.environ.get("TEST_STUDENT_PASSWORD", "Password123!")
-    student_login = requests.post(
-        f"{SERVICES['core']}/login",
-        json={"email": student_email, "password": student_password},
-        timeout=10,
-    )
-
-    student_token = None
-    lecturer_token = None
-
-    if student_login.status_code == 200:
-        login_json = student_login.json()
-        login_role = (login_json.get("user", {}).get("role") or "").lower()
-        if login_role == "student":
-            student_token = login_json["access_token"]
-        elif login_role in {"lecturer", "admin"}:
-            lecturer_token = login_json["access_token"]
-
-    if not student_token:
-        jwt_secret = _get_jwt_secret()
-        if jwt_secret:
-            import jwt as pyjwt
-
-            student_token = pyjwt.encode(
-                {
-                    "sub": str(uuid.uuid4()),
-                    "email": "student.e2e@example.com",
-                    "role": "student",
-                },
-                jwt_secret,
-                algorithm="HS256",
-            )
+    student_token, _, lecturer_token = _get_student_and_lecturer_tokens()
 
     if not student_token:
         pytest.skip("Student credentials or JWT_SECRET required to verify 403 response for Story #7 E2E")
@@ -823,34 +863,6 @@ def test_at_risk_students_e2e():
     assert forbidden_resp.status_code == 403
 
     # 3. Lecturer/Admin token must receive 200 with a JSON list
-    if not lecturer_token:
-        lecturer_email = os.environ.get("TEST_LECTURER_EMAIL", "lecturer@example.com")
-        lecturer_password = os.environ.get("TEST_LECTURER_PASSWORD", "Password123!")
-        lecturer_login = requests.post(
-            f"{SERVICES['core']}/login",
-            json={"email": lecturer_email, "password": lecturer_password},
-            timeout=10,
-        )
-        if lecturer_login.status_code == 200:
-            lecturer_user = lecturer_login.json().get("user", {})
-            if (lecturer_user.get("role") or "").lower() in {"lecturer", "admin"}:
-                lecturer_token = lecturer_login.json()["access_token"]
-
-    if not lecturer_token:
-        jwt_secret = _get_jwt_secret()
-        if jwt_secret:
-            import jwt as pyjwt
-
-            lecturer_token = pyjwt.encode(
-                {
-                    "sub": str(uuid.uuid4()),
-                    "email": os.environ.get("TEST_LECTURER_EMAIL", "lecturer@example.com"),
-                    "role": "lecturer",
-                },
-                jwt_secret,
-                algorithm="HS256",
-            )
-
     if not lecturer_token:
         pytest.skip("Lecturer credentials or JWT_SECRET required to verify 200 response for Story #7 E2E")
 
