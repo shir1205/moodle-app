@@ -1,4 +1,4 @@
-"""CampuScope Admin User Management Router (Team 1 - Story #64)"""
+"""CampuScope AdmVALID_ROLESdetail="תפקיד לא תקין. הערכים המותרים הם: student, lecturer, admin",in User Management Router (Team 1 - Story #64)"""
 import os
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
@@ -6,7 +6,7 @@ from auth_middleware import get_current_user
 
 router = APIRouter(tags=["Admin"])
 
-VALID_ROLES = {"student", "ta", "lecturer", "admin"}
+VALID_ROLES = {"student", "lecturer", "admin"}
 
 
 def _get_supabase():
@@ -98,7 +98,7 @@ def update_user_role(
     if new_role not in VALID_ROLES:
         raise HTTPException(
             status_code=400,
-            detail="תפקיד לא תקין. הערכים המותרים הם: student, ta, lecturer, admin",
+            detail="תפקיד לא תקין. הערכים המותרים הם: student, lecturer, admin",
         )
 
     supabase = _get_supabase()
