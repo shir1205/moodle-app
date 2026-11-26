@@ -459,14 +459,48 @@ def get_grading_submissions(
         if not membership.data:
             raise HTTPException(status_code=403, detail="אין הרשאת בדיקה בקורס זה.")
 
-    submissions = (
+        submissions = (
         submissions_db.table("submissions")
-        .select("id, file_name, submitted_at, submission_grades(grade, feedback, published_at)")
+        .select(
+            "id, student_id, file_name, submitted_at, "
+            "submission_grades(grade, feedback, published_at)"
+        )
         .eq("assignment_id", assignment_id)
         .order("submitted_at", desc=True, nullsfirst=False)
         .execute()
     )
+
+    student_ids_by_submission = {}
+    for submission in submissions.data:
+        student_id = submission.pop("student_id", None)
+        try:
+            student_ids_by_submission[submission["id"]] = str(uuid.UUID(student_id or ""))
+        except ValueError:
+            # Older demo submissions may have IDs such as "student-shira".
+            continue
+
+    names_by_id = {}
+    if student_ids_by_submission:
+        students = (
+            submissions_db.table("users")
+            .select("id, full_name")
+            .in_("id", sorted(set(student_ids_by_submission.values())))
+            .execute()
+        )
+        names_by_id = {student["id"]: student["full_name"] for student in students.data}
+
+    for submission in submissions.data:
+        student_id = student_ids_by_submission.get(submission["id"])
+        submission["student_name"] = names_by_id.get(student_id) or "שם לא זמין"
+
+        grade = submission.get("submission_grades")
+        submission["review_status"] = (
+            "graded" if grade and grade.get("published_at") else "pending"
+        )
+
     return {"assignment": assignment_info, "submissions": submissions.data}
+
+
 @app.get("/api/me/submissions")
 def get_my_submissions(user: dict = Depends(get_authenticated_user)):
     if submissions_db is None:

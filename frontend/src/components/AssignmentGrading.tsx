@@ -10,6 +10,11 @@ export function AssignmentGrading({ assignmentId }: { assignmentId: string }) {
   const [data, setData] = useState<GradingSubmissionsResponse | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+  const [showPendingOnly, setShowPendingOnly] = useState(false);
+  const submissions = data?.submissions ?? [];
+  const visibleSubmissions = showPendingOnly
+    ? submissions.filter((submission) => submission.review_status === 'pending')
+    : submissions;
 
   async function run(action: () => Promise<void>) {
     setBusy(true);
@@ -35,9 +40,24 @@ export function AssignmentGrading({ assignmentId }: { assignmentId: string }) {
 
       {busy && <p role="status">מעבד בקשה…</p>}
       {error && <p role="alert" className="text-red-700">{error}</p>}
-      {data?.submissions.length === 0 && <p>אין הגשות למטלה זו.</p>}
-
-      {data?.submissions.map((submission) => {
+      {data && (
+        <label className="flex items-center gap-2">
+          <input
+            type="checkbox"
+            checked={showPendingOnly}
+            onChange={(event) => setShowPendingOnly(event.target.checked)}
+          />
+          הצג רק הגשות שממתינות לבדיקה
+        </label>
+      )}
+      {data && visibleSubmissions.length === 0 && (
+        <p>
+          {showPendingOnly
+            ? 'אין הגשות שממתינות לבדיקה.'
+            : 'אין הגשות למטלה זו.'}
+        </p>
+      )}
+      {data && visibleSubmissions.map((submission) => {
         const savedGrade = submission.submission_grades;
         const published = Boolean(savedGrade?.published_at);
 
@@ -57,6 +77,16 @@ export function AssignmentGrading({ assignmentId }: { assignmentId: string }) {
               });
             }}
           >
+            <p className="font-semibold">{submission.student_name}</p>
+            <p className="text-sm">
+              מועד הגשה:{' '}
+              {submission.submitted_at
+                ? new Date(submission.submitted_at).toLocaleString('he-IL')
+                : 'לא זמין'}
+            </p>
+            <p>
+              {submission.review_status === 'graded' ? 'נבדק' : 'ממתין לבדיקה'}
+            </p>
             <p className="font-semibold">{submission.file_name}</p>
             <p>{published ? 'ציון פורסם' : savedGrade ? 'טיוטה שמורה' : 'טרם נשמר ציון'}</p>
 

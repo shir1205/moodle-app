@@ -184,6 +184,8 @@ export interface GradingSubmissionsResponse {
   };
   submissions: {
     id: string;
+    student_name: string;
+    review_status: 'graded' | 'pending';
     file_name: string;
     submitted_at: string | null;
     submission_grades: GradingGrade | null;
