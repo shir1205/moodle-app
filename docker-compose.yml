@@ -19,7 +19,9 @@ services:
     env_file: .env
 
   backend-courses:       # צוות 2 - קורסים ומטלות
-    build: ./backend-courses
+    build:
+      context: .
+      dockerfile: backend-courses/Dockerfile
     ports:
       - "8002:8000"
     env_file: .env

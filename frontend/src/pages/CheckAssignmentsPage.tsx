@@ -221,6 +221,7 @@ export const CheckAssignmentsPage: React.FC = () => {
   const [submissionsList, setSubmissionsList] = useState<Submission[]>(() =>
     AssignmentService.getSubmissionsForAssignment(selectedAssignmentId)
   );
+  const [showPendingOnly, setShowPendingOnly] = useState(false);
 
   const activeAssignment = AssignmentService.getAssignmentById(selectedAssignmentId);
 
@@ -372,9 +373,11 @@ export const CheckAssignmentsPage: React.FC = () => {
   const gradedCount = submissionsList.filter(
     (s) => s.status === 'graded' || s.grade !== undefined
   ).length;
-  const pendingReviewCount = submissionsList.filter(
-    (s) => s.status !== 'graded' && s.grade === undefined
-  ).length;
+  const pendingSubmissions = submissionsList.filter(
+    (submission) => submission.status !== 'graded' && submission.grade === undefined
+  );
+  const pendingReviewCount = pendingSubmissions.length;
+  const visibleSubmissions = showPendingOnly ? pendingSubmissions : submissionsList;
   const lateCount = submissionsList.filter((s) => s.isLate).length;
 
   return (
@@ -499,6 +502,15 @@ export const CheckAssignmentsPage: React.FC = () => {
         </div>
       </div>
 
+      <label className="inline-flex items-center gap-2">
+        <input
+          type="checkbox"
+          checked={showPendingOnly}
+          onChange={(event) => setShowPendingOnly(event.target.checked)}
+        />
+        הצג רק הגשות שממתינות לבדיקה
+      </label>
+
       {/* Submissions List Table */}
       <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm p-6 space-y-4">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-3 border-b border-slate-100 dark:border-slate-800">
@@ -519,9 +531,11 @@ export const CheckAssignmentsPage: React.FC = () => {
           </div>
         </div>
 
-        {submissionsList.length === 0 ? (
+        {visibleSubmissions.length === 0 ? (
           <div className="py-12 text-center text-xs text-slate-400">
-            אין הגשות הממתינות לבדיקה במטלה זו.
+            {showPendingOnly
+              ? 'אין הגשות הממתינות לבדיקה במטלה זו.'
+              : 'אין הגשות במטלה זו.'}
           </div>
         ) : (
           <div className="overflow-x-auto">
@@ -539,7 +553,7 @@ export const CheckAssignmentsPage: React.FC = () => {
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
-                {submissionsList.map((sub) => {
+                {visibleSubmissions.map((sub) => {
                   const hasVersions = !!MOCK_VERSION_HISTORIES[sub.id];
                   const versionCount = hasVersions ? 2 : 1;
                   const isGraded = sub.status === 'graded' || sub.grade !== undefined;
