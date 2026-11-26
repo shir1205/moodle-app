@@ -1,3 +1,4 @@
+import { AssignmentGrading } from './AssignmentGrading';
 import React, { useEffect, useState } from 'react';
 import {
   AuthContext,
@@ -359,6 +360,10 @@ export const CourseContentWorkspace: React.FC<Props> = ({ courseId = 'course-ds-
                 </div>
 
                 {a.instructions && <p className="text-sm text-slate-600">{a.instructions}</p>}
+
+                {role === 'LECTURER' && a.status === 'published' && (
+                  <AssignmentGrading assignmentId={a.id} />
+                )}
 
                 {/* Lecturer Publish Action */}
                 {role === 'LECTURER' && a.status === 'draft' && (

@@ -2,6 +2,8 @@
 import os
 import uuid
 import time
+import sys
+from pathlib import Path
 from datetime import datetime, timezone
 from typing import Optional
 
@@ -13,6 +15,13 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+_CORE_DIR = Path(__file__).resolve().parent.parent / "backend-core"
+if str(_CORE_DIR) not in sys.path:
+    sys.path.insert(0, str(_CORE_DIR))
+
+from auth_middleware import get_current_user as get_authenticated_user  # noqa: E402
+from rbac import require_roles  # noqa: E402
+
 ALLOWED_MATERIAL_EXTENSIONS = {"PDF", "DOCX", "PPTX"}
 MAX_FILE_SIZE_BYTES = 20 * 1024 * 1024  # 20 MB
 
@@ -22,6 +31,12 @@ SUPABASE_KEY = os.getenv("SUPABASE_KEY", "")
 supabase: Optional[Client] = None
 if SUPABASE_URL and SUPABASE_KEY:
     supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
+service_role_key = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
+submissions_db = (
+    create_client(SUPABASE_URL, service_role_key)
+    if SUPABASE_URL and service_role_key
+    else None
+)
 
 app = FastAPI(title="CampuScope Courses & Assignments")
 
@@ -268,7 +283,7 @@ ALLOWED_SUBMISSION_EXTENSIONS = {"PDF", "ZIP", "PY", "JAVA", "CS", "TXT"}
 async def submit_or_replace_solution(
     assignment_id: str,
     file: UploadFile = File(...),
-    user: dict = Depends(get_current_user),
+    user: dict = Depends(get_authenticated_user),
 ):
     ensure_db()
     assign_res = supabase.table("assignments").select("*").eq("id", assignment_id).execute()
@@ -289,8 +304,14 @@ async def submit_or_replace_solution(
     if ext not in ALLOWED_SUBMISSION_EXTENSIONS:
         raise HTTPException(status_code=400, detail=f"סוג קובץ לא מורשה להגשה: {ext}")
 
+    if submissions_db is None:
+        raise HTTPException(
+            status_code=503,
+            detail="שמירת הגשות אינה זמינה כרגע.",
+        )
+
     content = await file.read()
-    storage_path = f"{assignment_id}/{user['user_id']}/{int(now_utc.timestamp())}_{safe_name}"
+    storage_path = f"{assignment_id}/{user['user_id']}/{uuid.uuid4().hex}.{ext.lower()}"
     supabase.storage.from_("submissions").upload(
         path=storage_path,
         file=content,
@@ -298,23 +319,206 @@ async def submit_or_replace_solution(
     )
     public_url = supabase.storage.from_("submissions").get_public_url(storage_path)
 
-    submission_data = {
-        "id": f"sub-{uuid.uuid4().hex[:8]}",
-        "assignment_id": assignment_id,
-        "student_id": user["user_id"],
-        "file_name": safe_name,
-        "file_url": public_url,
-        "status": "submitted",
-        "submitted_at": now_utc.isoformat(),
-        "updated_at": now_utc.isoformat(),
-    }
+    res = submissions_db.rpc(
+        "save_assignment_submission",
+        {
+            "p_assignment_id": assignment_id,
+            "p_student_id": user["user_id"],
+            "p_file_name": safe_name,
+            "p_file_url": public_url,
+            "p_submitted_at": now_utc.isoformat(),
+        },
+    ).execute()
+    return res.data[0]
 
-    res = (
-        supabase.table("submissions")
-        .upsert(submission_data, on_conflict="assignment_id,student_id")
+def require_grading_access(
+    submission_id: str,
+    user: dict = Depends(require_roles("lecturer", "admin")),
+):
+    if submissions_db is None:
+        raise HTTPException(status_code=503, detail="שירות הציונים אינו זמין כרגע.")
+
+    submission = (
+        submissions_db.table("submissions")
+        .select("assignment_id")
+        .eq("id", submission_id)
+        .limit(1)
         .execute()
     )
-    return res.data[0]
+    if not submission.data or submission.data[0]["assignment_id"] is None:
+        raise HTTPException(status_code=404, detail="ההגשה לא נמצאה.")
+
+    assignment = (
+        submissions_db.table("assignments")
+        .select("course_id, max_grade")
+        .eq("id", submission.data[0]["assignment_id"])
+        .limit(1)
+        .execute()
+    )
+    if not assignment.data:
+        raise HTTPException(status_code=404, detail="המטלה לא נמצאה.")
+
+    assignment_info = assignment.data[0]
+    if user["role"].lower() != "admin":
+        membership = (
+            submissions_db.table("course_lecturers")
+            .select("lecturer_id")
+            .eq("course_id", assignment_info["course_id"])
+            .eq("lecturer_id", user["user_id"])
+            .limit(1)
+            .execute()
+        )
+        if not membership.data:
+            raise HTTPException(status_code=403, detail="אין הרשאת בדיקה בקורס זה.")
+
+    return assignment_info
+
+class GradeDraft(BaseModel):
+    grade: float = Field(ge=0, allow_inf_nan=False)
+    feedback: str = ""
+
+
+@app.put("/api/submissions/{submission_id}/grade")
+def save_grade_draft(
+    submission_id: str,
+    body: GradeDraft,
+    assignment_info: dict = Depends(require_grading_access),
+):
+    if body.grade > assignment_info["max_grade"]:
+        raise HTTPException(status_code=400, detail="הציון חורג מהציון המרבי במטלה.")
+
+    values = {"grade": body.grade, "feedback": body.feedback}
+    grades = submissions_db.table("submission_grades")
+
+    inserted = grades.upsert(
+        {"submission_id": submission_id, **values},
+        on_conflict="submission_id",
+        ignore_duplicates=True,
+    ).execute()
+    if inserted.data:
+        return inserted.data[0]
+
+    updated = (
+        grades.update(values)
+        .eq("submission_id", submission_id)
+        .is_("published_at", "null")
+        .execute()
+    )
+    if not updated.data:
+        raise HTTPException(status_code=409, detail="לא ניתן לערוך ציון שכבר פורסם.")
+
+    return updated.data[0]
+@app.post("/api/submissions/{submission_id}/grade/publish")
+def publish_submission_grade(
+    submission_id: str,
+    assignment_info: dict = Depends(require_grading_access),
+):
+    result = (
+        submissions_db.table("submission_grades")
+        .update({"published_at": datetime.now(timezone.utc).isoformat()})
+        .eq("submission_id", submission_id)
+        .is_("published_at", "null")
+        .execute()
+    )
+
+    if not result.data:
+        raise HTTPException(
+            status_code=409,
+            detail="אין טיוטת ציון זמינה לפרסום.",
+        )
+
+    return result.data[0]
+@app.get("/api/assignments/{assignment_id}/grading-submissions")
+def get_grading_submissions(
+    assignment_id: str,
+    user: dict = Depends(require_roles("lecturer", "admin")),
+):
+    if submissions_db is None:
+        raise HTTPException(status_code=503, detail="שירות הציונים אינו זמין כרגע.")
+
+    assignment = (
+        submissions_db.table("assignments")
+        .select("course_id, title, max_grade")
+        .eq("id", assignment_id)
+        .limit(1)
+        .execute()
+    )
+    if not assignment.data:
+        raise HTTPException(status_code=404, detail="המטלה לא נמצאה.")
+
+    assignment_info = assignment.data[0]
+    if user["role"].lower() != "admin":
+        membership = (
+            submissions_db.table("course_lecturers")
+            .select("lecturer_id")
+            .eq("course_id", assignment_info["course_id"])
+            .eq("lecturer_id", user["user_id"])
+            .limit(1)
+            .execute()
+        )
+        if not membership.data:
+            raise HTTPException(status_code=403, detail="אין הרשאת בדיקה בקורס זה.")
+
+    submissions = (
+        submissions_db.table("submissions")
+        .select("id, file_name, submitted_at, submission_grades(grade, feedback, published_at)")
+        .eq("assignment_id", assignment_id)
+        .order("submitted_at", desc=True, nullsfirst=False)
+        .execute()
+    )
+    return {"assignment": assignment_info, "submissions": submissions.data}
+@app.get("/api/me/submissions")
+def get_my_submissions(user: dict = Depends(get_authenticated_user)):
+    if submissions_db is None:
+        raise HTTPException(
+            status_code=503,
+            detail="רשימת ההגשות אינה זמינה כרגע.",
+        )
+
+    result = (
+        submissions_db.table("submissions")
+        .select("id, assignment_id, file_name, submitted_at")
+        .eq("student_id", user["user_id"])
+        .order("submitted_at", desc=True, nullsfirst=False)
+        .execute()
+    )
+    return result.data
+
+@app.get("/api/assignments/{assignment_id}/my-grade")
+def get_my_assignment_grade(
+    assignment_id: str,
+    user: dict = Depends(get_authenticated_user),
+):
+    ensure_db()
+
+    submission = (
+        supabase.table("submissions")
+        .select("id")
+        .eq("assignment_id", assignment_id)
+        .eq("student_id", user["user_id"])
+        .limit(1)
+        .execute()
+    )
+    if not submission.data:
+        raise HTTPException(status_code=404, detail="אין ציון שפורסם למטלה זו.")
+
+    if submissions_db is None:
+        raise HTTPException(
+            status_code=503,
+            detail="הצגת ציון אינה זמינה כרגע.",
+        )
+    result = (
+        submissions_db.table("submission_grades")
+        .select("grade, feedback, published_at")
+        .eq("submission_id", submission.data[0]["id"])
+        .not_.is_("published_at", "null")
+        .limit(1)
+        .execute()
+    )
+    if not result.data:
+        raise HTTPException(status_code=404, detail="אין ציון שפורסם למטלה זו.")
+
+    return result.data[0]
 
 
 @app.get("/api/assignments/{assignment_id}/submissions")

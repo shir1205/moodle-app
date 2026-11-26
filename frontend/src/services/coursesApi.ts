@@ -1,3 +1,5 @@
+import { authFetch } from "./apiClient";
+
 // @ts-ignore
 const API_BASE = (import.meta as any).env?.VITE_COURSES_API_URL || 'http://localhost:8002';
 
@@ -113,11 +115,13 @@ export async function submitSolution(
   const formData = new FormData();
   formData.append('file', file);
 
-  const res = await fetch(`${API_BASE}/api/assignments/${assignmentId}/submit`, {
-    method: 'POST',
-    headers: buildHeaders(auth, false),
-    body: formData,
-  });
+  const res = await authFetch(
+    `${API_BASE}/api/assignments/${assignmentId}/submit`,
+    {
+      method: 'POST',
+      body: formData,
+    }
+  );
   return handleResponse(res);
 }
 
@@ -126,4 +130,90 @@ export async function fetchStudentSubmission(assignmentId: string, studentId: st
     `${API_BASE}/api/assignments/${assignmentId}/submissions?student_id=${encodeURIComponent(studentId)}`
   );
   return handleResponse<any[]>(res);
+}
+
+export interface PublishedGrade {
+  grade: number;
+  feedback: string;
+  published_at: string;
+}
+
+export async function fetchMyAssignmentGrade(
+  assignmentId: string,
+  signal?: AbortSignal
+): Promise<PublishedGrade | null> {
+  const response = await authFetch(
+    `${API_BASE}/api/assignments/${encodeURIComponent(assignmentId)}/my-grade`,
+    { signal }
+  );
+
+  if (response.status === 404) {
+    return null;
+  }
+
+  return handleResponse<PublishedGrade>(response);
+}
+
+export interface MySubmission {
+  id: string;
+  assignment_id: string | null;
+  file_name: string;
+  submitted_at: string | null;
+}
+
+export async function fetchMySubmissions(
+  signal?: AbortSignal
+): Promise<MySubmission[]> {
+  const response = await authFetch(`${API_BASE}/api/me/submissions`, { signal });
+  return handleResponse<MySubmission[]>(response);
+}
+export interface GradeDraftInput {
+  grade: number;
+  feedback: string;
+}
+
+export interface GradingGrade extends GradeDraftInput {
+  published_at: string | null;
+}
+
+export interface GradingSubmissionsResponse {
+  assignment: {
+    course_id: string;
+    title: string;
+    max_grade: number;
+  };
+  submissions: {
+    id: string;
+    file_name: string;
+    submitted_at: string | null;
+    submission_grades: GradingGrade | null;
+  }[];
+}
+
+export async function fetchGradingSubmissions(
+  assignmentId: string,
+  signal?: AbortSignal
+): Promise<GradingSubmissionsResponse> {
+  const url = `${API_BASE}/api/assignments/${encodeURIComponent(assignmentId)}/grading-submissions`;
+  return handleResponse<GradingSubmissionsResponse>(await authFetch(url, { signal }));
+}
+
+export async function saveGradeDraft(
+  submissionId: string,
+  draft: GradeDraftInput
+): Promise<GradingGrade> {
+  const url = `${API_BASE}/api/submissions/${encodeURIComponent(submissionId)}/grade`;
+  const response = await authFetch(url, {
+    method: 'PUT',
+    body: JSON.stringify(draft),
+  });
+  return handleResponse<GradingGrade>(response);
+}
+
+export async function publishSubmissionGrade(
+  submissionId: string
+): Promise<GradingGrade> {
+  const url = `${API_BASE}/api/submissions/${encodeURIComponent(submissionId)}/grade/publish`;
+  const response = await authFetch(url, { method: 'POST' });
+  return handleResponse<GradingGrade>(response);
 }
