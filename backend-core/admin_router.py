@@ -13,21 +13,38 @@ def _get_supabase():
     from supabase import create_client
 
     url = os.environ.get("SUPABASE_URL")
-    key = os.environ.get("SUPABASE_KEY")
+    key = os.environ.get("SUPABASE_SERVICE_ROLE_KEY") or os.environ.get("SUPABASE_KEY")
     if not url or not key:
         return None
     return create_client(url, key)
 
 
 def require_admin(current_user: dict = Depends(get_current_user)) -> dict:
-    """מאפשר גישה למנהל מערכת (admin) בלבד"""
+    """מאפשר גישה למנהל מערכת (admin) בלבד לפי התפקיד העדכני ב-Supabase"""
     user_role = (current_user.get("role") or "student").strip().lower()
+    email = (current_user.get("email") or "").strip().lower()
+
+    supabase = _get_supabase()
+    if supabase and email:
+        try:
+            res = (
+                supabase.table("users")
+                .select("role")
+                .eq("email", email)
+                .limit(1)
+                .execute()
+            )
+            if res.data and res.data[0].get("role"):
+                user_role = res.data[0]["role"].strip().lower()
+        except Exception:
+            pass
+
     if user_role != "admin":
         raise HTTPException(
             status_code=403,
             detail="אין לך הרשאה לבצע פעולה זו (נדרשת הרשאת מנהל מערכת)",
         )
-    return current_user
+    return {**current_user, "role": user_role}
 
 
 class UpdateUserRoleRequest(BaseModel):
@@ -43,19 +60,29 @@ def list_all_users(current_user: dict = Depends(require_admin)):
         raise HTTPException(status_code=500, detail="חיבור ל-Supabase אינו מוגדר בשרת")
 
     try:
-        result = (
-            supabase.table("users")
-            .select("id, email, full_name, role, department, avatar_url, created_at")
-            .execute()
+        result = supabase.table("users").select("*").execute()
+    except Exception as e:
+        print("ADMIN LIST USERS ERROR:", repr(e))
+        raise HTTPException(
+            status_code=500,
+            detail=f"שגיאת מסד נתונים בשליפת משתמשים: {e}",
         )
-    except Exception:
-        raise HTTPException(status_code=500, detail="לא ניתן לשלוף את רשימת המשתמשים כרגע")
 
-    users = sorted(
-        result.data or [],
-        key=lambda u: u.get("created_at") or "",
-        reverse=True,
-    )
+    raw_users = result.data or []
+    users = [
+        {
+            "id": u.get("id"),
+            "email": u.get("email", ""),
+            "full_name": u.get("full_name", ""),
+            "role": u.get("role", "student"),
+            "department": u.get("department"),
+            "avatar_url": u.get("avatar_url"),
+            "created_at": u.get("created_at"),
+        }
+        for u in raw_users
+    ]
+
+    users.sort(key=lambda u: u.get("created_at") or "", reverse=True)
     return {"users": users}
 
 
@@ -85,8 +112,12 @@ def update_user_role(
             .eq("id", user_id)
             .execute()
         )
-    except Exception:
-        raise HTTPException(status_code=500, detail="לא ניתן לעדכן את תפקיד המשתמש כרגע")
+    except Exception as e:
+        print("ADMIN UPDATE ROLE ERROR:", repr(e))
+        raise HTTPException(
+            status_code=500,
+            detail=f"שגיאת מסד נתונים בעדכון תפקיד: {e}",
+        )
 
     updated_user = result.data[0] if result.data else None
     if not updated_user:

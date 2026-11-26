@@ -532,12 +532,29 @@ def require_roles(*allowed_roles: str):
     """Dependency לאכיפת הרשאות לפי תפקיד - מחזיר 403 Forbidden למשתמש לא מורשה"""
     def role_checker(current_user: dict = Depends(get_current_user)) -> dict:
         user_role = (current_user.get("role") or "student").strip().lower()
+        email = (current_user.get("email") or "").strip().lower()
+
+        supabase = get_supabase()
+        if supabase and email:
+            try:
+                res = (
+                    supabase.table("users")
+                    .select("role")
+                    .eq("email", email)
+                    .limit(1)
+                    .execute()
+                )
+                if res.data and res.data[0].get("role"):
+                    user_role = res.data[0]["role"].strip().lower()
+            except Exception:
+                pass
+
         if user_role not in allowed_roles:
             raise HTTPException(
                 status_code=403,
                 detail="אין לך הרשאה לבצע פעולה זו",
             )
-        return current_user
+        return {**current_user, "role": user_role}
 
     return role_checker
 

@@ -59,7 +59,7 @@ export const AdminControlPage: React.FC = () => {
   );
 
   // User Management state
-  const [usersList, setUsersList] = useState<User[]>(allUsers);
+  const [usersList, setUsersList] = useState<User[]>([]);
   const [savingRole, setSavingRole] = useState(false);
   const [userSearch, setUserSearch] = useState('');
   const [editingUser, setEditingUser] = useState<User | null>(null);
@@ -91,19 +91,19 @@ export const AdminControlPage: React.FC = () => {
     status: 'active',
   });
 
-  const loadUsersFromBackend = () => {
-    fetchAllUsersFromApi()
-      .then((backendUsers) => {
-        setUsersList(backendUsers.map(mapBackendUser));
-      })
-      .catch(() => {
-        setUsersList(allUsers);
-      });
+  const loadUsersFromBackend = async () => {
+    try {
+      const backendUsers = await fetchAllUsersFromApi();
+      setUsersList(backendUsers.map(mapBackendUser));
+    } catch (err: any) {
+      console.error('Failed to load users from backend:', err);
+      showToast(err?.message || 'לא ניתן לטעון את המשתמשים ממסד הנתונים', 'error');
+    }
   };
 
   useEffect(() => {
     loadUsersFromBackend();
-  }, []);
+  }, [activeTab]);
 
   const filteredUsers = usersList.filter(
     (u) =>
@@ -159,13 +159,7 @@ export const AdminControlPage: React.FC = () => {
     try {
       await updateUserRoleInApi(editingUser.id, targetRole);
 
-      setUsersList((prev) =>
-        prev.map((u) =>
-          u.id === editingUser.id
-            ? { ...u, role: targetRole, assignedCourseIds: targetCourseIds }
-            : u
-        )
-      );
+     await loadUsersFromBackend();
 
       AuthService.updateUserRole(currentUser.id, editingUser.id, targetRole, targetCourseIds);
       refreshUsers();
