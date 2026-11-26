@@ -8,6 +8,7 @@ import { User } from '../types';
 import { UserRole } from '../config/constants';
 import { AuthService } from '../services/authService';
 import { NotificationService } from '../services/notificationService';
+import { authFetch } from '../services/apiClient';
 
 interface AuthContextType {
   currentUser: User | null;
@@ -43,6 +44,28 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [currentUser, setCurrentUser] = useState<User | null>(() => AuthService.getCurrentUser());
   const [allUsers, setAllUsers] = useState<User[]>(() => AuthService.getUsers());
   const [unreadCount, setUnreadCount] = useState<number>(0);
+  useEffect(() => {
+  if (!currentUser?.email) return;
+
+  authFetch('/profile')
+    .then(async (res) => {
+      if (!res.ok) return;
+      const data = await res.json();
+      const profile = data?.profile || data;
+      if (profile?.role && profile.role !== currentUser.role) {
+        const updatedUser: User = {
+          ...currentUser,
+          name: profile.full_name || currentUser.name,
+          role: profile.role as UserRole,
+        };
+        AuthService.setCurrentUser(updatedUser);
+        setCurrentUser(updatedUser);
+      }
+    })
+    .catch((err) => {
+      console.error('שגיאה בטעינת תפקיד מהשרת:', err);
+    });
+}, [currentUser?.email]);
 
   const refreshUsers = useCallback(() => {
     setAllUsers(AuthService.getUsers());

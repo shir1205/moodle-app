@@ -24,6 +24,8 @@ from pydantic import BaseModel
 
 app = FastAPI(title="CampuScope Core & Users")
 app.include_router(notifications_router)
+from admin_router import router as admin_router
+app.include_router(admin_router)
 
 # מאפשר ל-Frontend (פורט 3000) לפנות לשירות
 app.add_middleware(
@@ -368,8 +370,9 @@ def read_profile(current_user: dict = Depends(get_current_user)):
 
     try:
         result = supabase.table("users").select("*").eq("email", email).limit(1).execute()
-    except Exception:
-        raise HTTPException(status_code=500, detail="לא ניתן לשלוף את פרטי הפרופיל כרגע")
+    except Exception as e:
+        print("PROFILE SUPABASE ERROR:", e)
+        raise HTTPException(status_code=500, detail=f"לא ניתן לשלוף את פרטי הפרופיל: {e}")
 
     record = result.data[0] if result.data else None
     if not record:
@@ -518,7 +521,6 @@ def change_password(body: ChangePasswordRequest, current_user: dict = Depends(ge
 @app.post("/logout")
 def logout(current_user: dict = Depends(get_current_user)):
     return {"logged_out": True}
-
 # ---------------------------------------------------------------------------
 # סיפור 88 - אכיפת הרשאות מבוססת תפקידים (RBAC Middleware / Dependency)
 # ---------------------------------------------------------------------------
@@ -530,15 +532,38 @@ def require_roles(*allowed_roles: str):
     """Dependency לאכיפת הרשאות לפי תפקיד - מחזיר 403 Forbidden למשתמש לא מורשה"""
     def role_checker(current_user: dict = Depends(get_current_user)) -> dict:
         user_role = (current_user.get("role") or "student").strip().lower()
+        email = (current_user.get("email") or "").strip().lower()
+
+        supabase = get_supabase()
+        if supabase and email:
+            try:
+                res = (
+                    supabase.table("users")
+                    .select("role")
+                    .eq("email", email)
+                    .limit(1)
+                    .execute()
+                )
+                if res.data and res.data[0].get("role"):
+                    user_role = res.data[0]["role"].strip().lower()
+            except Exception:
+                pass
+
         if user_role not in allowed_roles:
             raise HTTPException(
                 status_code=403,
                 detail="אין לך הרשאה לבצע פעולה זו",
             )
-        return current_user
+        return {**current_user, "role": user_role}
 
     return role_checker
+<<<<<<< HEAD
+
+
+# ---------------------------------------------------------------------------
+=======
     # ---------------------------------------------------------------------------
+>>>>>>> 0944f0d8232d62c0f6f54b0558e1f166c9de141b
 # סיפור 87 (Tasks #184, #185) - ניהול תפקידים והרשאות (RBAC)
 # ---------------------------------------------------------------------------
 
