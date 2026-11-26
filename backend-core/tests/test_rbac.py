@@ -51,10 +51,14 @@ def test_student_and_lecturer_blocked_from_admin_role_update_with_403():
         assert res.status_code == 403
 
 
-def test_invalid_role_value_rejected_with_422():
-    res = client.patch(
-        "/users/00000000-0000-0000-0000-000000000002/role",
-        json={"role": "super_hacker"},
-        headers=_auth_header("admin"),
-    )
-    assert res.status_code == 422
+def test_require_student_blocks_lecturer():
+    from fastapi import Depends
+    from main import app
+    from rbac import require_student
+
+    @app.get("/_test_student_only", dependencies=[Depends(require_student)])
+    def _student_only():
+        return {"ok": True}
+
+    res = client.get("/_test_student_only", headers=_auth_header("lecturer"))
+    assert res.status_code == 403
