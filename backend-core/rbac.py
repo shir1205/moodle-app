@@ -55,6 +55,6 @@ def require_roles(*allowed_roles: UserRole | str) -> Callable:
 
 
 # קיצורי דרך נוחים לשימוש בכל השירותים (צוותים 1, 2, 3 ו-4)
-require_student = require_roles(UserRole.STUDENT, UserRole.LECTURER, UserRole.ADMIN)
+require_student = require_roles(UserRole.STUDENT, UserRole.ADMIN)
 require_lecturer = require_roles(UserRole.LECTURER, UserRole.ADMIN)
 require_admin = require_roles(UserRole.ADMIN)
