@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { useToast } from '../context/ToastContext';
 import { CourseService } from '../services/courseService';
@@ -33,6 +33,9 @@ export const AtRiskStudentsPage: React.FC = () => {
 
   const [selectedCourseId, setSelectedCourseId] = useState<string>('all');
   const [selectedStudentIds, setSelectedStudentIds] = useState<string[]>([]);
+  const [atRiskStudents, setAtRiskStudents] = useState<AtRiskStudent[]>([]);
+  const [isLoading, setIsLoading] = useState<boolean>(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
 
   // AI Encouragement draft modal state
   const [showDraftModal, setShowDraftModal] = useState(false);
@@ -43,9 +46,29 @@ export const AtRiskStudentsPage: React.FC = () => {
   const [isSending, setIsSending] = useState(false);
   const [sendError, setSendError] = useState<string | null>(null);
 
-  const atRiskStudents = AnalyticsService.getAtRiskStudents(
-    selectedCourseId === 'all' ? undefined : selectedCourseId
-  );
+  const loadAtRiskStudents = useCallback(async () => {
+    setIsLoading(true);
+    setLoadError(null);
+    try {
+      const data = await AnalyticsService.fetchAtRiskStudents(
+        selectedCourseId === 'all' ? undefined : selectedCourseId
+      );
+      setAtRiskStudents(data);
+    } catch (error) {
+      const message =
+        error instanceof Error && error.message
+          ? error.message
+          : 'לא ניתן לטעון את רשימת הסטודנטים בסיכון';
+      setLoadError(message);
+      setAtRiskStudents([]);
+    } finally {
+      setIsLoading(false);
+    }
+  }, [selectedCourseId]);
+
+  useEffect(() => {
+    loadAtRiskStudents();
+  }, [loadAtRiskStudents]);
 
   const handleToggleStudent = (studentId: string) => {
     setSelectedStudentIds((prev) =>
@@ -146,8 +169,32 @@ export const AtRiskStudentsPage: React.FC = () => {
         </div>
       </div>
 
-      {/* At-Risk Table or Zero-State Card */}
-      {atRiskStudents.length === 0 ? (
+      {/* Loading, Error, Zero-State or At-Risk Table */}
+      {isLoading ? (
+        <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 p-12 text-center space-y-3">
+          <Loader2 className="w-8 h-8 animate-spin text-indigo-600 mx-auto" />
+          <p className="text-sm font-semibold text-slate-600 dark:text-slate-300">
+            מנתח נתוני ציונים והגשות ומזהה סטודנטים בסיכון...
+          </p>
+        </div>
+      ) : loadError ? (
+        <div className="p-8 rounded-2xl bg-rose-50/70 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-800 text-center space-y-3">
+          <AlertTriangle className="w-8 h-8 text-rose-600 mx-auto" />
+          <div className="space-y-1">
+            <h3 className="text-base font-bold text-rose-900 dark:text-rose-100">
+              שגיאה בטעינת רשימת הסטודנטים בסיכון
+            </h3>
+            <p className="text-xs text-rose-700 dark:text-rose-300">{loadError}</p>
+          </div>
+          <button
+            type="button"
+            onClick={loadAtRiskStudents}
+            className="px-4 py-2 rounded-xl bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold transition-colors"
+          >
+            נסה שוב
+          </button>
+        </div>
+      ) : atRiskStudents.length === 0 ? (
         /* Zero At-Risk Celebration Card (Mandatory Requirement) */
         <div className="p-8 sm:p-12 rounded-2xl bg-emerald-50/70 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800 text-center space-y-4">
           <div className="w-16 h-16 rounded-full bg-emerald-100 dark:bg-emerald-900/60 text-emerald-600 dark:text-emerald-300 font-black text-3xl flex items-center justify-center mx-auto shadow-sm">

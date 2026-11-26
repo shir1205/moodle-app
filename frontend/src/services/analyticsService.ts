@@ -14,6 +14,19 @@ import { AssignmentService } from './assignmentService';
 import { AuthService } from './authService';
 import { SEED_SYSTEM_SETTINGS } from '../data/seedData';
 import { ANALYTICS_TARGETS } from '../config/constants';
+import { authFetch, getAuthToken } from './apiClient';
+
+interface BackendAtRiskStudent {
+  student_id: string;
+  full_name: string;
+  email: string;
+  average_grade: number | null;
+  missed_assignments_count: number;
+  risk_reasons: string[];
+  course_id?: string | null;
+  courses?: string[];
+  severity?: 'high' | 'medium';
+}
 
 export class AnalyticsService {
   private static init(): void {
@@ -274,5 +287,73 @@ export class AnalyticsService {
     });
 
     return atRiskList;
+  }
+
+  private static mapAtRiskFromBackend(row: BackendAtRiskStudent): AtRiskStudent {
+    const resolvedCourseId = row.course_id || row.courses?.[0] || 'course-1';
+    const course = CourseService.getCourseById(resolvedCourseId);
+    const courseTitle = course
+      ? course.title
+      : row.courses && row.courses.length > 0
+      ? row.courses.join(', ')
+      : resolvedCourseId;
+
+    const avg =
+      row.average_grade !== null && row.average_grade !== undefined
+        ? Math.round(row.average_grade)
+        : 0;
+    const missed = row.missed_assignments_count ?? 0;
+
+    return {
+      studentId: row.student_id,
+      studentName: row.full_name || row.email,
+      studentEmail: row.email,
+      courseId: resolvedCourseId,
+      courseTitle,
+      currentAverage: avg,
+      missedSubmissionsCount: missed,
+      warningReason: Array.isArray(row.risk_reasons) ? row.risk_reasons.join(' · ') : '',
+      severity:
+        row.severity === 'high' || (row.average_grade !== null && avg < 50) || missed >= 3
+          ? 'high'
+          : 'medium',
+    };
+  }
+
+  /**
+   * Fetch at-risk students from backend-core (GET /analytics/at-risk).
+   */
+  static async fetchAtRiskStudents(courseId?: string): Promise<AtRiskStudent[]> {
+    if (!getAuthToken()) {
+      throw new Error('יש להתחבר לחשבון מרצה מאומת כדי לצפות בסטודנטים בסיכון');
+    }
+
+    const query =
+      courseId && courseId !== 'all'
+        ? `?course_id=${encodeURIComponent(courseId)}`
+        : '';
+    const response = await authFetch(`/analytics/at-risk${query}`, {
+      method: 'GET',
+    });
+
+    if (!response.ok) {
+      let detail = `שגיאת שרת (${response.status})`;
+      try {
+        const errorBody = await response.json();
+        if (typeof errorBody?.detail === 'string' && errorBody.detail.trim()) {
+          detail = errorBody.detail;
+        }
+      } catch {
+        // Keep default status error message
+      }
+      throw new Error(detail);
+    }
+
+    const rows: unknown = await response.json();
+    if (!Array.isArray(rows)) {
+      throw new Error('תגובה לא צפויה משרת האנליטיקה');
+    }
+
+    return (rows as BackendAtRiskStudent[]).map((row) => this.mapAtRiskFromBackend(row));
   }
 }

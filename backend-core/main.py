@@ -19,12 +19,14 @@ import jwt
 from fastapi import Depends, FastAPI, Header, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from notifications_router import router as notifications_router
+from analytics_router import router as analytics_router
+from admin_router import router as admin_router
 from auth_middleware import JWT_ALGORITHM, JWT_SECRET, get_current_user
 from pydantic import BaseModel
 
 app = FastAPI(title="CampuScope Core & Users")
 app.include_router(notifications_router)
-from admin_router import router as admin_router
+app.include_router(analytics_router)
 app.include_router(admin_router)
 
 # מאפשר ל-Frontend (פורט 3000) לפנות לשירות
@@ -557,13 +559,8 @@ def require_roles(*allowed_roles: str):
         return {**current_user, "role": user_role}
 
     return role_checker
-<<<<<<< HEAD
-
 
 # ---------------------------------------------------------------------------
-=======
-    # ---------------------------------------------------------------------------
->>>>>>> 0944f0d8232d62c0f6f54b0558e1f166c9de141b
 # סיפור 87 (Tasks #184, #185) - ניהול תפקידים והרשאות (RBAC)
 # ---------------------------------------------------------------------------
 

@@ -1,9 +1,9 @@
 import os
+from pathlib import Path
 import uuid
 
 import pytest
 import requests
-import uuid
 
 # Base URLs matching docker-compose port mappings
 SERVICES = {
@@ -638,6 +638,23 @@ def test_notifications_integration():
     assert "updated_count" in read_all_resp.json()
 
 
+def _get_jwt_secret() -> str | None:
+    """Read JWT_SECRET or SUPABASE_KEY from env (or root .env read-only) for local test JWT signing."""
+    secret = os.environ.get("JWT_SECRET") or os.environ.get("SUPABASE_KEY")
+    if secret:
+        return secret
+    env_path = Path(__file__).resolve().parent.parent / ".env"
+    if env_path.exists():
+        env_values: dict[str, str] = {}
+        for line in env_path.read_text(encoding="utf-8").splitlines():
+            stripped = line.strip()
+            if "=" in stripped and not stripped.startswith("#"):
+                key, val = stripped.split("=", 1)
+                env_values[key.strip()] = val.strip()
+        return env_values.get("JWT_SECRET") or env_values.get("SUPABASE_KEY")
+    return None
+
+
 def test_encouragement_notification_e2e():
     """Story #9 E2E: Lecturer sends encouragement notification and student sees it in GET /notifications/."""
     # 1. Unauthenticated request must be rejected with 401
@@ -693,7 +710,7 @@ def test_encouragement_notification_e2e():
             lecturer_token = lecturer_login.json()["access_token"]
 
     if not lecturer_token:
-        jwt_secret = os.environ.get("JWT_SECRET") or os.environ.get("SUPABASE_KEY")
+        jwt_secret = _get_jwt_secret()
         if jwt_secret:
             import jwt as pyjwt
 
@@ -748,3 +765,106 @@ def test_encouragement_notification_e2e():
         and item.get("is_read") is False
         for item in notifications
     )
+
+
+# ==========================================
+# Team 4: At-Risk Students Analytics (Story #7)
+# ==========================================
+
+def test_at_risk_students_e2e():
+    """Story #7 E2E: Verify 401 without token, 403 for student, and 200 JSON list for lecturer/admin."""
+    # 1. Unauthenticated request must return 401
+    unauth_resp = requests.get(f"{SERVICES['core']}/analytics/at-risk", timeout=10)
+    assert unauth_resp.status_code == 401
+
+    # 2. Authenticate and obtain both a student token (403) and a lecturer/admin token (200)
+    student_email = os.environ.get("TEST_STUDENT_EMAIL", "user@example.com")
+    student_password = os.environ.get("TEST_STUDENT_PASSWORD", "Password123!")
+    student_login = requests.post(
+        f"{SERVICES['core']}/login",
+        json={"email": student_email, "password": student_password},
+        timeout=10,
+    )
+
+    student_token = None
+    lecturer_token = None
+
+    if student_login.status_code == 200:
+        login_json = student_login.json()
+        login_role = (login_json.get("user", {}).get("role") or "").lower()
+        if login_role == "student":
+            student_token = login_json["access_token"]
+        elif login_role in {"lecturer", "admin"}:
+            lecturer_token = login_json["access_token"]
+
+    if not student_token:
+        jwt_secret = _get_jwt_secret()
+        if jwt_secret:
+            import jwt as pyjwt
+
+            student_token = pyjwt.encode(
+                {
+                    "sub": str(uuid.uuid4()),
+                    "email": "student.e2e@example.com",
+                    "role": "student",
+                },
+                jwt_secret,
+                algorithm="HS256",
+            )
+
+    if not student_token:
+        pytest.skip("Student credentials or JWT_SECRET required to verify 403 response for Story #7 E2E")
+
+    forbidden_resp = requests.get(
+        f"{SERVICES['core']}/analytics/at-risk",
+        headers={"Authorization": f"Bearer {student_token}"},
+        timeout=10,
+    )
+    assert forbidden_resp.status_code == 403
+
+    # 3. Lecturer/Admin token must receive 200 with a JSON list
+    if not lecturer_token:
+        lecturer_email = os.environ.get("TEST_LECTURER_EMAIL", "lecturer@example.com")
+        lecturer_password = os.environ.get("TEST_LECTURER_PASSWORD", "Password123!")
+        lecturer_login = requests.post(
+            f"{SERVICES['core']}/login",
+            json={"email": lecturer_email, "password": lecturer_password},
+            timeout=10,
+        )
+        if lecturer_login.status_code == 200:
+            lecturer_user = lecturer_login.json().get("user", {})
+            if (lecturer_user.get("role") or "").lower() in {"lecturer", "admin"}:
+                lecturer_token = lecturer_login.json()["access_token"]
+
+    if not lecturer_token:
+        jwt_secret = _get_jwt_secret()
+        if jwt_secret:
+            import jwt as pyjwt
+
+            lecturer_token = pyjwt.encode(
+                {
+                    "sub": str(uuid.uuid4()),
+                    "email": os.environ.get("TEST_LECTURER_EMAIL", "lecturer@example.com"),
+                    "role": "lecturer",
+                },
+                jwt_secret,
+                algorithm="HS256",
+            )
+
+    if not lecturer_token:
+        pytest.skip("Lecturer credentials or JWT_SECRET required to verify 200 response for Story #7 E2E")
+
+    ok_resp = requests.get(
+        f"{SERVICES['core']}/analytics/at-risk",
+        headers={"Authorization": f"Bearer {lecturer_token}"},
+        timeout=10,
+    )
+    assert ok_resp.status_code == 200
+    data = ok_resp.json()
+    assert isinstance(data, list)
+    for item in data:
+        assert "student_id" in item
+        assert "full_name" in item
+        assert "email" in item
+        assert "missed_assignments_count" in item
+        assert "risk_reasons" in item
