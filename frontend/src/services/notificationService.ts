@@ -280,6 +280,63 @@ export class NotificationService {
     return mapped;
   }
 
+  /**
+   * Send an encouragement notification from a lecturer/admin to an at-risk student.
+   * Awaits the backend response and throws an Error on failure (never fire-and-forget).
+   */
+  static async sendEncouragementNotification(params: {
+    studentId: string;
+    title: string;
+    message: string;
+    courseId?: string;
+    link?: string;
+  }): Promise<Notification> {
+    this.init();
+    if (!getAuthToken()) {
+      throw new Error('יש להתחבר לחשבון מרצה מאומת כדי לשלוח הודעת עידוד');
+    }
+
+    const response = await authFetch('/notifications/encouragement', {
+      method: 'POST',
+      body: JSON.stringify({
+        student_id: params.studentId,
+        title: params.title,
+        message: params.message,
+        course_id: params.courseId ?? null,
+        link: params.link ?? null,
+      }),
+    });
+
+    if (!response.ok) {
+      let detail = `שגיאת שרת (${response.status})`;
+      try {
+        const errorBody = await response.json();
+        if (typeof errorBody?.detail === 'string' && errorBody.detail.trim()) {
+          detail = errorBody.detail;
+        } else if (Array.isArray(errorBody?.detail) && errorBody.detail.length > 0) {
+          detail = errorBody.detail
+            .map((item: { msg?: string }) => item?.msg || 'קלט לא תקין')
+            .join(', ');
+        }
+      } catch {
+        // Keep default HTTP status message if response body is not JSON
+      }
+      throw new Error(detail);
+    }
+
+    const saved = (await response.json()) as BackendNotification;
+    const mapped: Notification = {
+      ...this.mapFromBackend(saved),
+      type: 'at_risk',
+    };
+
+    const all = StorageService.get<Notification[]>(StorageService.keys.NOTIFICATIONS, []);
+    all.unshift(mapped);
+    StorageService.set(StorageService.keys.NOTIFICATIONS, all);
+
+    return mapped;
+  }
+
   static createNotification(params: {
     userId: string;
     type: NotificationType;

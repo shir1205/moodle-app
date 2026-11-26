@@ -22,12 +22,20 @@ def auth_header(user_id: str = LECTURER_UUID, email: str = "michal@demo.ac.il", 
     return {"Authorization": f"Bearer {token}"}
 
 
-def mock_supabase_tables(users=None, assignments=None, submissions=None, error=None):
+def mock_supabase_tables(
+    users=None,
+    assignments=None,
+    submissions=None,
+    submission_grades=None,
+    error=None,
+    submission_grades_error=None,
+):
     mock_supabase = MagicMock()
     table_map = {
         "users": users if users is not None else [],
         "assignments": assignments if assignments is not None else [],
         "submissions": submissions if submissions is not None else [],
+        "submission_grades": submission_grades if submission_grades is not None else [],
     }
 
     def table_side_effect(table_name: str):
@@ -35,6 +43,8 @@ def mock_supabase_tables(users=None, assignments=None, submissions=None, error=N
         select_mock = table_mock.select.return_value
         if error is not None:
             select_mock.execute.side_effect = error
+        elif table_name == "submission_grades" and submission_grades_error is not None:
+            select_mock.execute.side_effect = submission_grades_error
         else:
             select_mock.execute.return_value = SimpleNamespace(data=table_map.get(table_name, []))
         return table_mock
@@ -62,16 +72,27 @@ def test_at_risk_identifies_low_grade_and_missed_assignments_and_excludes_health
         {"id": "a4", "course_id": "course-1", "due_date": past_1, "status": "draft"},
     ]
     submissions = [
-        # Low-grade student submitted both past assignments, but average is 52.5 (< 60)
-        {"id": "s1", "assignment_id": "a1", "student_id": STUDENT_LOW_GRADE_UUID, "grade": 50},
-        {"id": "s2", "assignment_id": "a2", "student_id": STUDENT_LOW_GRADE_UUID, "grade": 55},
+        # Low-grade student submitted both past assignments (grades live in submission_grades)
+        {"id": "s1", "assignment_id": "a1", "student_id": STUDENT_LOW_GRADE_UUID},
+        {"id": "s2", "assignment_id": "a2", "student_id": STUDENT_LOW_GRADE_UUID},
         # Missed-assignments student has 0 submissions -> 2 missed past-due published assignments
         # Healthy student submitted both past assignments with good grades (90, 85) -> NOT at risk
-        {"id": "s3", "assignment_id": "a1", "student_id": STUDENT_HEALTHY_UUID, "grade": 90},
-        {"id": "s4", "assignment_id": "a2", "student_id": STUDENT_HEALTHY_UUID, "grade": 85},
+        {"id": "s3", "assignment_id": "a1", "student_id": STUDENT_HEALTHY_UUID},
+        {"id": "s4", "assignment_id": "a2", "student_id": STUDENT_HEALTHY_UUID},
+    ]
+    submission_grades = [
+        {"submission_id": "s1", "grade": 50, "feedback": "חסרים מקרי קצה", "published_at": past_1},
+        {"submission_id": "s2", "grade": 55, "feedback": "נדרש שיפור בסיבוכיות", "published_at": past_2},
+        {"submission_id": "s3", "grade": 90, "feedback": "מצוין", "published_at": past_1},
+        {"submission_id": "s4", "grade": 85, "feedback": "עבודה טובה", "published_at": past_2},
     ]
 
-    mock_supabase = mock_supabase_tables(users=users, assignments=assignments, submissions=submissions)
+    mock_supabase = mock_supabase_tables(
+        users=users,
+        assignments=assignments,
+        submissions=submissions,
+        submission_grades=submission_grades,
+    )
 
     with patch("analytics_router.get_supabase", return_value=mock_supabase):
         response = client.get("/analytics/at-risk", headers=auth_header(role="lecturer"))
@@ -149,11 +170,17 @@ def test_at_risk_missing_invalid_or_expired_token_401():
 def test_at_risk_rbac_roles_403_and_200_case_insensitive():
     mock_supabase = mock_supabase_tables(users=[], assignments=[], submissions=[])
 
-    for forbidden_role in ("student", "STUDENT", "ta", "TA"):
+    for forbidden_student in ("student", "STUDENT"):
         with patch("analytics_router.get_supabase", return_value=mock_supabase):
-            resp = client.get("/analytics/at-risk", headers=auth_header(role=forbidden_role))
+            resp = client.get("/analytics/at-risk", headers=auth_header(role=forbidden_student))
         assert resp.status_code == 403
-        assert resp.json()["detail"] == "אין הרשאה לבצע פעולה זו"
+        assert "אין לך הרשאה" in resp.json()["detail"]
+
+    for forbidden_ta in ("ta", "TA"):
+        with patch("analytics_router.get_supabase", return_value=mock_supabase):
+            resp = client.get("/analytics/at-risk", headers=auth_header(role=forbidden_ta))
+        assert resp.status_code == 403
+        assert "תפקיד משתמש לא חוקי" in resp.json()["detail"]
 
     for allowed_role in ("lecturer", "LECTURER", "admin", "ADMIN"):
         with patch("analytics_router.get_supabase", return_value=mock_supabase):
@@ -170,3 +197,34 @@ def test_at_risk_supabase_error_returns_500():
 
     assert response.status_code == 500
     assert "Supabase" in response.json()["detail"]
+
+
+def test_at_risk_submission_grades_rls_falls_back_cleanly():
+    now = datetime.now(timezone.utc)
+    past_1 = (now - timedelta(days=4)).isoformat()
+
+    users = [
+        {"id": STUDENT_LOW_GRADE_UUID, "email": "low@demo.ac.il", "full_name": "דנה לוי", "role": "student"},
+    ]
+    assignments = [
+        {"id": "a1", "course_id": "course-1", "due_date": past_1, "status": "published"},
+    ]
+    submissions = [
+        {"id": "s1", "assignment_id": "a1", "student_id": STUDENT_LOW_GRADE_UUID, "grade": 48},
+    ]
+
+    mock_supabase = mock_supabase_tables(
+        users=users,
+        assignments=assignments,
+        submissions=submissions,
+        submission_grades_error=RuntimeError("RLS blocked submission_grades"),
+    )
+
+    with patch("analytics_router.get_supabase", return_value=mock_supabase):
+        response = client.get("/analytics/at-risk", headers=auth_header(role="lecturer"))
+
+    assert response.status_code == 200
+    data = response.json()
+    assert len(data) == 1
+    assert data[0]["student_id"] == STUDENT_LOW_GRADE_UUID
+    assert data[0]["average_grade"] == 48.0

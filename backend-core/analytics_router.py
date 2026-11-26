@@ -6,7 +6,7 @@ from typing import Any, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query
 from supabase import Client, create_client
 
-from auth_middleware import get_current_user
+from rbac import require_lecturer
 
 router = APIRouter(prefix="/analytics", tags=["Analytics"])
 
@@ -20,11 +20,18 @@ def get_supabase() -> Client:
     return create_client(url, key)
 
 
-def _extract_submission_grade(submission: dict[str, Any]) -> Optional[float]:
+def _extract_submission_grade(
+    submission: dict[str, Any],
+    grades_by_submission_id: Optional[dict[str, float]] = None,
+) -> Optional[float]:
     """
-    # TODO (Team 2 schema): Update grade extraction once Team 2 finalizes the
-    # grading column on 'submissions' or adds a dedicated 'grades' table.
+    Extract grade for a submission from public.submission_grades (mapped by
+    submission_id), falling back to submission.get("grade") if present.
     """
+    submission_id = submission.get("id")
+    if grades_by_submission_id and submission_id in grades_by_submission_id:
+        return grades_by_submission_id[submission_id]
+
     raw_grade = submission.get("grade")
     if raw_grade is None:
         return None
@@ -71,13 +78,10 @@ async def get_at_risk_students(
     course_id: Optional[str] = None,
     min_grade_threshold: float = Query(default=60.0, ge=0.0, le=100.0),
     missed_submissions_threshold: int = Query(default=2, ge=1),
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(require_lecturer),
 ):
     """Identify at-risk students based on low grade average or missed past-due assignments."""
-    # TODO: Replace with Depends(require_lecturer) once backend-core/rbac.py (Story #87) is merged to main
-    role = (current_user.get("role") or "").strip().lower()
-    if role not in {"lecturer", "admin"}:
-        raise HTTPException(status_code=403, detail="אין הרשאה לבצע פעולה זו")
+    del current_user  # Enforced via rbac.require_lecturer (lecturer/admin)
 
     normalized_course_id = course_id.strip() if course_id and course_id.strip() else None
 
@@ -98,6 +102,27 @@ async def get_at_risk_students(
     users = users_res.data or []
     assignments = assignments_res.data or []
     submissions = submissions_res.data or []
+
+    grades_by_submission_id: dict[str, float] = {}
+    try:
+        grades_res = (
+            supabase.table("submission_grades")
+            .select("submission_id, grade")
+            .execute()
+        )
+        for grade_row in grades_res.data or []:
+            sub_id = grade_row.get("submission_id")
+            raw_grade = grade_row.get("grade")
+            if sub_id and raw_grade is not None:
+                try:
+                    grades_by_submission_id[sub_id] = float(raw_grade)
+                except (TypeError, ValueError):
+                    continue
+    except Exception as e:
+        print(
+            "Warning: unable to fetch submission_grades (using submissions.grade fallback): "
+            f"{e}"
+        )
 
     students = [
         u for u in users if (u.get("role") or "").strip().lower() == "student"
@@ -132,7 +157,7 @@ async def get_at_risk_students(
         grades = [
             grade
             for sub in student_submissions
-            if (grade := _extract_submission_grade(sub)) is not None
+            if (grade := _extract_submission_grade(sub, grades_by_submission_id)) is not None
         ]
         average_grade: Optional[float] = (
             round(sum(grades) / len(grades), 2) if grades else None

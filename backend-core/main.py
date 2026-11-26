@@ -20,12 +20,14 @@ from fastapi import Depends, FastAPI, Header, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from notifications_router import router as notifications_router
 from analytics_router import router as analytics_router
+from admin_router import router as admin_router
 from auth_middleware import JWT_ALGORITHM, JWT_SECRET, get_current_user
 from pydantic import BaseModel
 
 app = FastAPI(title="CampuScope Core & Users")
 app.include_router(notifications_router)
 app.include_router(analytics_router)
+app.include_router(admin_router)
 
 # מאפשר ל-Frontend (פורט 3000) לפנות לשירות
 app.add_middleware(
@@ -370,8 +372,9 @@ def read_profile(current_user: dict = Depends(get_current_user)):
 
     try:
         result = supabase.table("users").select("*").eq("email", email).limit(1).execute()
-    except Exception:
-        raise HTTPException(status_code=500, detail="לא ניתן לשלוף את פרטי הפרופיל כרגע")
+    except Exception as e:
+        print("PROFILE SUPABASE ERROR:", e)
+        raise HTTPException(status_code=500, detail=f"לא ניתן לשלוף את פרטי הפרופיל: {e}")
 
     record = result.data[0] if result.data else None
     if not record:
@@ -520,3 +523,114 @@ def change_password(body: ChangePasswordRequest, current_user: dict = Depends(ge
 @app.post("/logout")
 def logout(current_user: dict = Depends(get_current_user)):
     return {"logged_out": True}
+# ---------------------------------------------------------------------------
+# סיפור 88 - אכיפת הרשאות מבוססת תפקידים (RBAC Middleware / Dependency)
+# ---------------------------------------------------------------------------
+
+VALID_ROLES = {"student", "ta", "lecturer", "admin"}
+
+
+def require_roles(*allowed_roles: str):
+    """Dependency לאכיפת הרשאות לפי תפקיד - מחזיר 403 Forbidden למשתמש לא מורשה"""
+    def role_checker(current_user: dict = Depends(get_current_user)) -> dict:
+        user_role = (current_user.get("role") or "student").strip().lower()
+        email = (current_user.get("email") or "").strip().lower()
+
+        supabase = get_supabase()
+        if supabase and email:
+            try:
+                res = (
+                    supabase.table("users")
+                    .select("role")
+                    .eq("email", email)
+                    .limit(1)
+                    .execute()
+                )
+                if res.data and res.data[0].get("role"):
+                    user_role = res.data[0]["role"].strip().lower()
+            except Exception:
+                pass
+
+        if user_role not in allowed_roles:
+            raise HTTPException(
+                status_code=403,
+                detail="אין לך הרשאה לבצע פעולה זו",
+            )
+        return {**current_user, "role": user_role}
+
+    return role_checker
+
+# ---------------------------------------------------------------------------
+# סיפור 87 (Tasks #184, #185) - ניהול תפקידים והרשאות (RBAC)
+# ---------------------------------------------------------------------------
+
+from rbac import ALLOWED_ROLES, UserRole, require_admin, require_lecturer
+
+
+class UpdateUserRoleRequest(BaseModel):
+    role: UserRole
+
+
+@app.get("/users")
+def list_users_roles(current_user: dict = Depends(require_admin)):
+    """שליפת רשימת משתמשים ותפקידים - מוגבל למנהל מערכת (admin) בלבד"""
+    supabase = get_supabase()
+    if not supabase:
+        raise HTTPException(status_code=500, detail="חיבור ל-Supabase אינו מוגדר בשרת")
+
+    try:
+        result = supabase.table("users").select("id, email, full_name, role").execute()
+    except Exception:
+        raise HTTPException(status_code=500, detail="לא ניתן לשלוף את רשימת המשתמשים כרגע")
+
+    return {"users": result.data or []}
+
+
+@app.patch("/users/{user_id}/role")
+def update_user_role(
+    user_id: str,
+    body: UpdateUserRoleRequest,
+    current_user: dict = Depends(require_admin),
+):
+    """עדכון תפקיד משתמש (student / lecturer / admin) - מוגבל למנהל (admin) בלבד"""
+    new_role = body.role.value
+    if new_role not in ALLOWED_ROLES:
+        raise HTTPException(status_code=400, detail="תפקיד לא חוקי")
+
+    supabase = get_supabase()
+    if not supabase:
+        raise HTTPException(status_code=500, detail="חיבור ל-Supabase אינו מוגדר בשרת")
+
+    try:
+        result = (
+            supabase.table("users")
+            .update({"role": new_role})
+            .eq("id", user_id)
+            .execute()
+        )
+    except Exception:
+        raise HTTPException(status_code=500, detail="לא ניתן לעדכן את תפקיד המשתמש כרגע")
+
+    record = result.data[0] if result.data else None
+    if not record:
+        raise HTTPException(status_code=404, detail="המשתמש לא נמצא")
+
+    return {
+        "updated": True,
+        "user": {
+            "id": record.get("id"),
+            "email": record.get("email"),
+            "full_name": record.get("full_name"),
+            "role": record.get("role"),
+        },
+    }
+
+
+@app.get("/rbac/lecturer-only")
+def lecturer_only_check(current_user: dict = Depends(require_lecturer)):
+    """נקודת בדיקה להרשאות מרצה/מנהל (מחזירה 403 לסטודנט)"""
+    return {
+        "allowed": True,
+        "user_id": current_user["user_id"],
+        "role": current_user["role"],
+    }
