@@ -1,7 +1,7 @@
 /**
  * @license
  * SPDX-License-Identifier: Apache-2.0
- * 
+ *
  * AnalyticsService for CampuScope
  * Computes student completion metrics, anonymous class comparisons,
  * lecturer course KPIs, at-risk student detection algorithms, and admin monitoring telemetry.
@@ -26,6 +26,53 @@ interface BackendAtRiskStudent {
   course_id?: string | null;
   courses?: string[];
   severity?: 'high' | 'medium';
+}
+
+export interface StudentAssignmentProgressItem {
+  assignment_id: string;
+  course_id: string;
+  assignment_title: string;
+  due_date: string | null;
+  max_grade: number;
+  status: string;
+  submitted_at: string | null;
+  student_grade: number | null;
+  feedback: string | null;
+  published_at: string | null;
+}
+
+export interface StudentCourseSummary {
+  course_id: string;
+  total_assignments_count: number;
+  completed_assignments_count: number;
+  completion_rate_percent: number;
+  graded_assignments_count: number;
+  average_grade: number | null;
+}
+
+export interface UpcomingAssignmentItem {
+  id: string;
+  course_id: string;
+  title: string;
+  due_date: string | null;
+  max_grade: number;
+  is_submitted: boolean;
+}
+
+export interface StudentProgressResponse {
+  student_id: string;
+  course_id: string | null;
+  available_courses: string[];
+  completion_rate_percent: number;
+  completed_assignments_count: number;
+  total_assignments_count: number;
+  graded_assignments_count: number;
+  student_average: number | null;
+  has_grades: boolean;
+  message: string | null;
+  courses_summary: StudentCourseSummary[];
+  assignment_grades: StudentAssignmentProgressItem[];
+  upcoming_assignments: UpcomingAssignmentItem[];
 }
 
 export class AnalyticsService {
@@ -60,7 +107,6 @@ export class AnalyticsService {
       (s) => s.courseId === courseId
     );
 
-    // Count all materials in course
     let totalMaterialsCount = 0;
     if (course) {
       course.units.forEach((u) => {
@@ -69,7 +115,6 @@ export class AnalyticsService {
     }
 
     const completedAssignmentsCount = studentSubmissions.filter((s) => s.status !== 'not_submitted').length;
-    // Assume student viewed materials up to completed assignments proportion
     const completedMaterialsCount = Math.min(
       totalMaterialsCount,
       Math.max(1, Math.round(totalMaterialsCount * 0.8))
@@ -80,7 +125,6 @@ export class AnalyticsService {
     const completionRatePercent =
       totalTrackableItems > 0 ? Math.min(100, Math.round((completedTrackableItems / totalTrackableItems) * 100)) : 0;
 
-    // Student grades calculation (safely handling 0 grades)
     const gradedSubmissions = studentSubmissions.filter((s) => s.grade !== undefined);
     const studentAverage =
       gradedSubmissions.length > 0
@@ -89,7 +133,6 @@ export class AnalyticsService {
           )
         : 0;
 
-    // Anonymous class averages per assignment
     const allCourseSubmissions = StorageService.get<Submission[]>(StorageService.keys.SUBMISSIONS, []);
     const assignmentGrades = assignments.map((assignment) => {
       const studentSub = studentSubmissions.find((s) => s.assignmentId === assignment.id);
@@ -103,7 +146,7 @@ export class AnalyticsService {
               assignmentSubmissions.reduce((acc, curr) => acc + (curr.grade || 0), 0) /
                 assignmentSubmissions.length
             )
-          : 82; // representative default for display if not enough graded yet
+          : 82;
 
       return {
         assignmentId: assignment.id,
@@ -116,7 +159,6 @@ export class AnalyticsService {
       };
     });
 
-    // Overall class average across course
     const allGradedCourseSubs = allCourseSubmissions.filter(
       (s) => s.courseId === courseId && s.grade !== undefined
     );
@@ -162,32 +204,28 @@ export class AnalyticsService {
     const gradedSubs = filteredSubmissions.filter((s) => s.grade !== undefined);
     const grades = gradedSubs.map((s) => s.grade as number).sort((a, b) => a - b);
 
-    // Class average
     const classAverage =
       grades.length > 0 ? Math.round(grades.reduce((a, b) => a + b, 0) / grades.length) : 0;
 
-    // Median
     let classMedian = 0;
     if (grades.length > 0) {
       const mid = Math.floor(grades.length / 2);
       classMedian = grades.length % 2 !== 0 ? grades[mid] : Math.round((grades[mid - 1] + grades[mid]) / 2);
     }
 
-    // Submission rate
-    const totalPossibleSubmissions = enrolledStudents.length * (assignmentFilterId && assignmentFilterId !== 'all' ? 1 : assignments.length);
+    const totalPossibleSubmissions =
+      enrolledStudents.length * (assignmentFilterId && assignmentFilterId !== 'all' ? 1 : assignments.length);
     const actualSubmissionsCount = filteredSubmissions.length;
     const submissionRatePercent =
       totalPossibleSubmissions > 0
         ? Math.min(100, Math.round((actualSubmissionsCount / totalPossibleSubmissions) * 100))
         : 0;
 
-    // Histogram bins
     const histogram = ANALYTICS_TARGETS.HISTOGRAM_BINS.map((bin) => {
       const count = grades.filter((g) => g >= bin.min && g <= bin.max).length;
       return { range: bin.label, count };
     });
 
-    // Weekly submission trends
     const weeklySubmissionTrends = [
       { week: 'שבוע 1', count: 18, totalExpected: 20 },
       { week: 'שבוע 2', count: 17, totalExpected: 20 },
@@ -195,7 +233,6 @@ export class AnalyticsService {
       { week: 'שבוע 4', count: 15, totalExpected: 20 },
     ];
 
-    // At risk students in this course
     const atRiskStudents = this.getAtRiskStudents(courseId);
 
     return {
@@ -235,13 +272,11 @@ export class AnalyticsService {
         );
         const gradedSubs = studentSubs.filter((s) => s.grade !== undefined);
 
-        // Calculate average
         const avg =
           gradedSubs.length > 0
             ? Math.round(gradedSubs.reduce((a, b) => a + (b.grade || 0), 0) / gradedSubs.length)
             : 0;
 
-        // Count missing past-due submissions
         let missedCount = 0;
         pastDueAssignments.forEach((pda) => {
           const submitted = studentSubs.some((s) => s.assignmentId === pda.id);
@@ -250,9 +285,6 @@ export class AnalyticsService {
           }
         });
 
-        // Trigger conditions:
-        // 1. Average below threshold (e.g., < 60) AND has at least 1 graded assignment
-        // 2. Missed 2 or more past-due assignments
         const isAvgBelow = gradedSubs.length > 0 && avg < settings.minGradeThreshold;
         const isMissedSubmissionsExcessive = missedCount >= settings.missedSubmissionsThreshold;
 
@@ -355,5 +387,50 @@ export class AnalyticsService {
     }
 
     return (rows as BackendAtRiskStudent[]).map((row) => this.mapAtRiskFromBackend(row));
+  }
+
+  /**
+   * Story #37: Fetch authenticated student's personal progress and published grades
+   * from backend-core (GET /analytics/me/progress).
+   */
+  static async fetchMyProgress(courseId?: string): Promise<StudentProgressResponse> {
+    if (!getAuthToken()) {
+      throw new Error('יש להתחבר למערכת כדי לצפות בהתקדמות ובציונים האישיים');
+    }
+
+    const query =
+      courseId && courseId !== 'all'
+        ? `?course_id=${encodeURIComponent(courseId)}`
+        : '';
+    const response = await authFetch(`/analytics/me/progress${query}`, {
+      method: 'GET',
+    });
+
+    if (!response.ok) {
+      if (response.status === 401) {
+        throw new Error('פג תוקף ההתחברות — יש להתחבר מחדש כדי לצפות בנתונים האישיים');
+      }
+      if (response.status === 403) {
+        throw new Error('אין הרשאה לצפות בדשבורד הציונים האישי (מיועד לסטודנטים ולמנהלים בלבד)');
+      }
+
+      let detail = `שגיאה בטעינת נתוני ההתקדמות (${response.status})`;
+      try {
+        const errorBody = await response.json();
+        if (typeof errorBody?.detail === 'string' && errorBody.detail.trim()) {
+          detail = errorBody.detail;
+        }
+      } catch {
+        // Keep default status error message
+      }
+      throw new Error(detail);
+    }
+
+    const data: unknown = await response.json();
+    if (!data || typeof data !== 'object' || !Array.isArray((data as StudentProgressResponse).assignment_grades)) {
+      throw new Error('תגובה לא צפויה משרת האנליטיקה');
+    }
+
+    return data as StudentProgressResponse;
   }
 }
